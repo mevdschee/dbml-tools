@@ -3,12 +3,12 @@
 A CLI toolset for working with [DBML](https://dbml.dbdiagram.io) (Database
 Markup Language) files and databases.
 
-Functionality
+## Features
 
 - Convert DSN to DBML
 - Convert DBML to SQL
-- SQL migration from DBML/DSN
-- Generate Graphviz DOT diagrams
+- Convert DBML to Graphviz DOT diagrams
+- Compare DSN/DBML and create SQL migration
 
 ## Installation
 
