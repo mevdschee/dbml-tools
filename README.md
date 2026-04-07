@@ -24,20 +24,39 @@ go build -o dbml-tools .
 
 ## Commands
 
-```
-dbml-tools <command> [args]
+| Command                         | Description                                           |
+| ------------------------------- | ----------------------------------------------------- |
+| `lex <file>`                    | Tokenize a DBML file and output lexer JSON            |
+| `parse <file>`                  | Parse a DBML file and output AST JSON                 |
+| `interpret <file>`              | Interpret a DBML file and output database schema JSON |
+| `check <file>`                  | Check a DBML file for parse/semantic errors           |
+| `todbml [options] <dsn>`        | Connect to a database and print its schema as DBML    |
+| `tosql [options] <file>`        | Generate CREATE TABLE SQL from a DBML file            |
+| `migrate [options] <old> <new>` | Generate migration SQL from schema diff               |
 
-Commands:
-  lex        <file>                                    Tokenize a DBML file and output lexer JSON
-  parse      <file>                                    Parse a DBML file and output AST JSON
-  interpret  <file>                                    Interpret a DBML file and output database schema JSON
-  check      <file>                                    Check a DBML file for errors
-  todbml [--normalize] [--exclude p,...] [--include p,...] <dsn>
-                                                       Connect to a database and print its schema as DBML
-  tosql        <file>                                    Generate CREATE TABLE SQL from a DBML file
-  migrate    [--apply] [--exclude p,...] [--include p,...] <old> <new>
-                                                       Generate migration SQL from schema diff
-```
+### todbml options
+
+| Flag              | Description                                                          |
+| ----------------- | -------------------------------------------------------------------- |
+| `--normalize`     | Map column types to database-agnostic DBML equivalents               |
+| `--data`          | Also export row data as DBML `records` blocks                        |
+| `--exclude p,...` | Comma-separated table name patterns to exclude (supports `*` glob)   |
+| `--include p,...` | Comma-separated table name patterns to include (all others excluded) |
+
+### tosql options
+
+| Flag          | Description                                                         |
+| ------------- | ------------------------------------------------------------------- |
+| `--dialect d` | SQL dialect: `mariadb`, `postgres`, `sqlite` (default: auto-detect) |
+
+### migrate options
+
+| Flag              | Description                                                         |
+| ----------------- | ------------------------------------------------------------------- |
+| `--apply`         | Remove dry-run header (statements are ready to execute)             |
+| `--dialect d`     | SQL dialect: `mariadb`, `postgres`, `sqlite` (default: auto-detect) |
+| `--exclude p,...` | Comma-separated table name patterns to exclude                      |
+| `--include p,...` | Comma-separated table name patterns to include                      |
 
 ### How the SQL dialect is determined
 
