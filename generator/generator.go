@@ -19,15 +19,17 @@ const (
 
 // ParseDialect parses a dialect name into a Dialect constant.
 // Accepts driver names (postgres, mariadb, sqlite), DBML database_type values
-// (PostgreSQL, MariaDB, SQLite), and aliases. An empty string or "normalized"
-// returns Generic mode.
+// (PostgreSQL, MariaDB, SQLite), and aliases. A " normalized" suffix is
+// stripped before matching (e.g. "MariaDB normalized" → MariaDB).
+// An empty string or bare "normalized" returns Generic mode.
 func ParseDialect(s string) (Dialect, error) {
-	switch strings.ToLower(s) {
+	s = strings.TrimSuffix(strings.ToLower(s), " normalized")
+	switch s {
 	case "", "generic", "normalized":
 		return Generic, nil
 	case "postgres", "postgresql", "pg":
 		return Postgres, nil
-	case "MariaDB", "mariadb":
+	case "mariadb", "mysql", "mysql2":
 		return MariaDB, nil
 	case "sqlite":
 		return SQLite, nil
@@ -36,22 +38,36 @@ func ParseDialect(s string) (Dialect, error) {
 	}
 }
 
-// DialectFromDatabase extracts the SQL dialect from an interpreter.Database's
-// Project.database_type setting. Returns Generic if unset or "normalized".
-func DialectFromDatabase(db *interpreter.Database) Dialect {
+// IsNormalized returns true if the database_type string has the " normalized" suffix.
+func IsNormalized(s string) bool {
+	return strings.HasSuffix(strings.ToLower(s), " normalized")
+}
+
+// databaseType extracts the raw database_type string from a Database's Project setting.
+func databaseType(db *interpreter.Database) string {
 	proj, ok := db.Project.(map[string]interface{})
 	if !ok {
-		return Generic
+		return ""
 	}
-	dt, ok := proj["databaseType"].(string)
-	if !ok {
-		return Generic
-	}
-	d, err := ParseDialect(dt)
+	dt, _ := proj["databaseType"].(string)
+	return dt
+}
+
+// DialectFromDatabase extracts the SQL dialect from an interpreter.Database's
+// Project.database_type setting. The " normalized" suffix is stripped before
+// matching, so "MariaDB normalized" returns MariaDB.
+func DialectFromDatabase(db *interpreter.Database) Dialect {
+	d, err := ParseDialect(databaseType(db))
 	if err != nil {
 		return Generic
 	}
 	return d
+}
+
+// IsNormalizedDatabase returns true if the database has a " normalized" suffix
+// in its database_type Project setting.
+func IsNormalizedDatabase(db *interpreter.Database) bool {
+	return IsNormalized(databaseType(db))
 }
 
 func quoteIdent(name string, d Dialect) string {
@@ -629,9 +645,17 @@ func diffTable(oldTbl, newTbl interpreter.Table, oldDB, newDB *interpreter.Datab
 		oldSQL, _ := mapType(oldCol.Type.TypeName, typeArgs(oldCol), d, oldDB)
 		newSQL, _ := mapType(newCol.Type.TypeName, typeArgs(newCol), d, newDB)
 		typeChanged := oldSQL != newSQL
+		// When either schema is normalized, compare via normalizeForDiff
+		// so that equivalent types with different names or serial semantics
+		// (e.g. "binary" vs "blob", "serial" vs "int" with increment)
+		// are recognized as identical.
+		if typeChanged && (IsNormalizedDatabase(oldDB) || IsNormalizedDatabase(newDB)) {
+			typeChanged = normalizeForDiff(oldCol, oldDB) != normalizeForDiff(newCol, newDB)
+		}
 
-		oldNN := oldCol.NotNull != nil && *oldCol.NotNull
-		newNN := newCol.NotNull != nil && *newCol.NotNull
+		// PK implies NOT NULL, so treat PK columns as NOT NULL for comparison.
+		oldNN := (oldCol.NotNull != nil && *oldCol.NotNull) || oldCol.PK
+		newNN := (newCol.NotNull != nil && *newCol.NotNull) || newCol.PK
 		nullChanged := oldNN != newNN
 
 		if typeChanged {
@@ -674,6 +698,24 @@ func diffTable(oldTbl, newTbl interpreter.Table, oldDB, newDB *interpreter.Datab
 	}
 
 	return stmts
+}
+
+// normalizeForDiff returns a canonical type string for a column, suitable for
+// cross-schema comparison. It maps to Generic (collapsing dialect synonyms like
+// blob→binary) and folds serial/bigserial down to their base types (int/bigint)
+// so that "serial" and "int [increment]" compare as equal.
+func normalizeForDiff(col interpreter.Column, db *interpreter.Database) string {
+	generic, isSerial := mapType(col.Type.TypeName, typeArgs(col), Generic, db)
+	if isSerial {
+		// serial → int, bigserial → bigint
+		switch generic {
+		case "serial":
+			return "int"
+		case "bigserial":
+			return "bigint"
+		}
+	}
+	return generic
 }
 
 func tableMap(db *interpreter.Database) map[string]interpreter.Table {

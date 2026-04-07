@@ -8,10 +8,10 @@ Functionality
 - Convert DSN to DBML
 - Convert DBML to SQL
 - SQL migration from DBML/DSN
+- Generate Graphviz DOT diagrams
 
-Future goals:
+Future goals (work in progress):
 
-- A database visualiser (via open source dot files)
 - A database documentation builder (with an open source hugo output)
 
 ## Installation
@@ -35,6 +35,7 @@ go build -o dbml-tools .
 | `check <file>`                  | Check a DBML file for parse/semantic errors        |
 | `todbml [options] <dsn>`        | Connect to a database and print its schema as DBML |
 | `tosql <file>`                  | Generate CREATE TABLE SQL from a DBML file         |
+| `todot <file>`                  | Generate Graphviz DOT diagram from a DBML file     |
 | `migrate [options] <old> <new>` | Generate migration SQL from schema diff            |
 
 ### todbml options
@@ -74,6 +75,7 @@ The SQL dialect used by `tosql` and `migrate` is determined in this order:
 ```dbml
 Project {
   database_type: 'PostgreSQL'   // or 'MariaDB', 'SQLite'
+  // todbml --normalize produces e.g. 'MariaDB normalized'
 }
 ```
 
@@ -94,9 +96,10 @@ setting records which engine they came from, so downstream tools (`tosql`,
 **Normalized** (`todbml --normalize`)\
 Type names are mapped to canonical DBML equivalents (e.g. `integer` → `int`,
 `character varying(255)` → `varchar(255)`, `bytea` → `binary`). The
-`database_type` still reflects the source engine. Unrecognised or
-vendor-specific types (e.g. `public.geometry`) are copied verbatim. This mode
-produces database-agnostic DBML.
+`database_type` is set to `'<engine> normalized'` (e.g. `'MariaDB normalized'`)
+so that downstream tools know both the source engine and that types are
+normalized. Unrecognised or vendor-specific types (e.g. `public.geometry`) are
+copied verbatim. This mode produces database-agnostic DBML.
 
 ### todbml
 
@@ -168,6 +171,28 @@ statements are generated after each table.
 dbml-tools tosql schema.dbml
 ```
 
+### todot
+
+Generates a Graphviz DOT diagram of the database schema. Tables are rendered
+with columns, types, PK/FK markers, and constraint badges. Foreign key
+relationships are drawn as orthogonal edges with crow's foot notation.
+
+```sh
+# Output DOT to stdout
+dbml-tools todot schema.dbml
+
+# Generate a PDF
+dbml-tools todot schema.dbml | dot -Tpdf -o schema.pdf
+
+# Generate a PNG
+dbml-tools todot schema.dbml | dot -Tpng -o schema.png
+
+# Generate an SVG
+dbml-tools todot schema.dbml | dot -Tsvg -o schema.svg
+```
+
+Requires [Graphviz](https://graphviz.org/) (`dot`) to be installed for rendering.
+
 ### migrate
 
 Compares two schemas and outputs the SQL statements needed to migrate from the
@@ -195,6 +220,12 @@ dbml-tools migrate --exclude 'spatial_ref_sys,geography_columns' old.dbml postgr
 By default `migrate` is a **dry run**: it prints a `-- DRY RUN` header and the
 SQL statements, but executes nothing. Pass `--apply` to suppress the header so
 the output can be piped directly into a database client.
+
+**Normalized DBML support:** when either schema has a `database_type` ending in
+`" normalized"` (as produced by `todbml --normalize`), type names are normalized
+before comparison. This means equivalent types with different names (e.g.
+`binary` vs `blob`, `text` vs `longtext`) are correctly recognized as identical
+and do not produce spurious ALTER statements.
 
 The `--exclude` / `--include` filter flags work the same as for `todbml` and
 apply to both schema sides.

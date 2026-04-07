@@ -125,6 +125,9 @@ func Run(dsn string, sqlFS embed.FS, opts Options, normalize bool) (string, erro
 		EngineMariaDB:  "MariaDB",
 		EngineSQLite:   "SQLite",
 	}[parsed.Engine]
+	if normalize {
+		engineType += " normalized"
+	}
 	return GenerateDBML(filtered, engineType, normalize), nil
 }
 
