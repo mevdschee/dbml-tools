@@ -20,6 +20,7 @@ table_decl          = "Table" [ schema_prefix ] table_name
 
 table_item          = column_def
                     | index_block
+                    | records_block
                     | note_setting
                     | partial_injection ;
 
@@ -65,7 +66,7 @@ note_setting        = "Note" ":" string ;
 
 (* ── Project ───────────────────────────────────────────────────────── *)
 
-project_decl        = "Project" project_name "{" { project_field } "}" ;
+project_decl        = "Project" [ project_name ] "{" { project_field } "}" ;
 
 project_field       = identifier ":" value ;
 
@@ -90,6 +91,15 @@ index_def           = index_columns [ attribute_list ] ;
 
 index_columns       = column_name
                     | "(" column_name { "," column_name } ")" ;
+
+(* ── Records ──────────────────────────────────────────────────────── *)
+
+records_block       = "records" "(" column_name { "," column_name } ")"
+                      "{" { record_row } "}" ;
+
+record_row          = record_value { "," record_value } ;
+
+record_value        = string | "null" | function_expr ;
 
 (* ── Attribute list (settings) ─────────────────────────────────────── *)
 
