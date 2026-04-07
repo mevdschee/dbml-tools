@@ -525,13 +525,8 @@ func Dump(db *interpreter.Database, d Dialect) string {
 }
 
 // Migrate generates ALTER TABLE statements to migrate oldDB to newDB.
-// dryRun=true adds a header comment.
-func Migrate(oldDB, newDB *interpreter.Database, d Dialect, dryRun bool) string {
+func Migrate(oldDB, newDB *interpreter.Database, d Dialect) string {
 	var sb strings.Builder
-
-	if dryRun {
-		sb.WriteString("-- DRY RUN: review statements before executing\n\n")
-	}
 
 	oldTables := tableMap(oldDB)
 	newTables := tableMap(newDB)

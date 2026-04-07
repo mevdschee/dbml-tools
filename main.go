@@ -23,7 +23,7 @@ func usage() {
 	fmt.Fprintf(os.Stderr, "  todbml     [--normalize] <dsn> Connect to a database and output DBML\n")
 	fmt.Fprintf(os.Stderr, "  tosql      <file>              Generate CREATE TABLE SQL\n")
 	fmt.Fprintf(os.Stderr, "  todot      <file>              Generate Graphviz DOT diagram\n")
-	fmt.Fprintf(os.Stderr, "  migrate    [--apply] <old> <new>  Generate migration SQL\n")
+	fmt.Fprintf(os.Stderr, "  migrate    [options] <old> <new>  Generate migration SQL\n")
 	fmt.Fprintf(os.Stderr, "\nSQL dialect is determined by the database_type Project setting in DBML files.\n")
 	fmt.Fprintf(os.Stderr, "\nConnection string examples:\n")
 	fmt.Fprintf(os.Stderr, "  mariadb://user:pass@host:3306/mydb\n")
@@ -129,11 +129,10 @@ func doToSQL(args []string) {
 
 func doMigrate(args []string) {
 	fs := flag.NewFlagSet("migrate", flag.ExitOnError)
-	apply := fs.Bool("apply", false, "remove dry-run header (statements are ready to apply)")
 	excludeStr := fs.String("exclude", "", "comma-separated table name patterns to exclude (supports * glob)")
 	includeStr := fs.String("include", "", "comma-separated table name patterns to include (all others excluded)")
 	fs.Usage = func() {
-		fmt.Fprintf(os.Stderr, "Usage: dbml-tools migrate [--apply] [--exclude pattern,...] <old> <new>\n")
+		fmt.Fprintf(os.Stderr, "Usage: dbml-tools migrate [--exclude pattern,...] <old> <new>\n")
 		fmt.Fprintf(os.Stderr, "       <old> and <new> may each be a .dbml file path or a connection string.\n")
 		fmt.Fprintf(os.Stderr, "       SQL dialect is auto-detected from DSN or database_type Project setting.\n")
 		fs.PrintDefaults()
@@ -164,7 +163,7 @@ func doMigrate(args []string) {
 
 	d := resolveDialectDefault(resolveDialect(oldArg, newArg, oldDB, newDB))
 
-	fmt.Print(generator.Migrate(oldDB, newDB, d, !*apply))
+	fmt.Print(generator.Migrate(oldDB, newDB, d))
 }
 
 // loadSchema reads a schema from either a DBML file path or a live database DSN.

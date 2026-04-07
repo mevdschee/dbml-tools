@@ -51,7 +51,6 @@ go build -o dbml-tools .
 
 | Flag              | Description                                             |
 | ----------------- | ------------------------------------------------------- |
-| `--apply`         | Remove dry-run header (statements are ready to execute) |
 | `--exclude p,...` | Comma-separated table name patterns to exclude          |
 | `--include p,...` | Comma-separated table name patterns to include          |
 
@@ -210,16 +209,9 @@ dbml-tools migrate schema.dbml postgres://user:pass@host/db
 # Compare two live databases
 dbml-tools migrate mariadb://host/db1 mariadb://host/db2
 
-# Remove the dry-run header (output is ready to pipe into psql / mariadb)
-dbml-tools migrate --apply old.dbml new.dbml | psql "$DATABASE_URL"
-
 # Exclude system or extension tables from the comparison
 dbml-tools migrate --exclude 'spatial_ref_sys,geography_columns' old.dbml postgres://...
 ```
-
-By default `migrate` is a **dry run**: it prints a `-- DRY RUN` header and the
-SQL statements, but executes nothing. Pass `--apply` to suppress the header so
-the output can be piped directly into a database client.
 
 **Normalized DBML support:** when either schema has a `database_type` ending in
 `" normalized"` (as produced by `todbml --normalize`), type names are normalized
