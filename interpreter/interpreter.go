@@ -205,7 +205,7 @@ func (interp *Interpreter) interpretTable(db *Database, decl *parser.ElementDecl
 		// Capture table-level note: 'value' before treating item as a column.
 		if fa, ok := item.(*parser.FuncAppNode); ok {
 			if strings.ToLower(extractName(fa.Callee)) == "note" && len(fa.Args) > 0 {
-				v := extractStringValue(fa.Args[0])
+				v := extractKeyValue(fa.Args)
 				tbl.Note = &Note{Value: v, Token: nodeRange(fa)}
 				continue
 			}
@@ -246,10 +246,17 @@ func (interp *Interpreter) interpretField(n parser.Node) *Column {
 		}
 		col.Type = extractType(node.Args[0])
 
-		// process settings [...]
+		// process remaining args: type args (tuple) and settings (list)
 		for _, arg := range node.Args[1:] {
 			if list, ok := arg.(*parser.ListExprNode); ok {
 				interp.applyColumnSettings(col, list)
+			} else if tuple, ok := arg.(*parser.TupleExprNode); ok {
+				// Type arguments, e.g. (255) in varchar(255) or (10,2) in decimal(10,2)
+				args := make([]string, len(tuple.Items))
+				for i, item := range tuple.Items {
+					args[i] = extractStringValue(item)
+				}
+				col.Type.Args = args
 			}
 		}
 
@@ -514,7 +521,7 @@ func (interp *Interpreter) interpretProject(db *Database, decl *parser.ElementDe
 			if fa, ok := item.(*parser.FuncAppNode); ok {
 				key := strings.ToLower(extractName(fa.Callee))
 				if len(fa.Args) > 0 {
-					val := extractStringValue(fa.Args[0])
+					val := extractKeyValue(fa.Args)
 					switch key {
 					case "database_type":
 						proj["databaseType"] = val
@@ -579,6 +586,20 @@ func extractType(n parser.Node) ColumnType {
 		ct.TypeName = extractName(n)
 	}
 	return ct
+}
+
+// extractKeyValue returns the value from a FuncAppNode's Args, skipping
+// a leading colon separator if present (e.g. `key: 'value'` parses as
+// Args[0]=colon, Args[1]=value).
+func extractKeyValue(args []parser.Node) string {
+	if len(args) == 0 {
+		return ""
+	}
+	// Check if first arg is just a colon separator
+	if len(args) >= 2 && extractStringValue(args[0]) == ":" {
+		return extractStringValue(args[1])
+	}
+	return extractStringValue(args[0])
 }
 
 func extractStringValue(n parser.Node) string {
