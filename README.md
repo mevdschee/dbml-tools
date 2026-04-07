@@ -10,10 +10,6 @@ Functionality
 - SQL migration from DBML/DSN
 - Generate Graphviz DOT diagrams
 
-Future goals (work in progress):
-
-- A database documentation builder (with an open source hugo output)
-
 ## Installation
 
 ```sh
