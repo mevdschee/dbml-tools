@@ -28,7 +28,7 @@ go build -o dbml-tools .
 | ------------------------------- | -------------------------------------------------- |
 | `check <file>`                  | Check a DBML file for parse/semantic errors        |
 | `todbml [options] <dsn>`        | Connect to a database and print its schema as DBML |
-| `tosql [options] <file>`        | Generate CREATE TABLE SQL from a DBML file         |
+| `tosql <file>`                  | Generate CREATE TABLE SQL from a DBML file         |
 | `migrate [options] <old> <new>` | Generate migration SQL from schema diff            |
 
 ### todbml options
@@ -40,20 +40,13 @@ go build -o dbml-tools .
 | `--exclude p,...` | Comma-separated table name patterns to exclude (supports `*` glob)   |
 | `--include p,...` | Comma-separated table name patterns to include (all others excluded) |
 
-### tosql options
-
-| Flag          | Description                                                         |
-| ------------- | ------------------------------------------------------------------- |
-| `--dialect d` | SQL dialect: `mariadb`, `postgres`, `sqlite` (default: auto-detect) |
-
 ### migrate options
 
-| Flag              | Description                                                         |
-| ----------------- | ------------------------------------------------------------------- |
-| `--apply`         | Remove dry-run header (statements are ready to execute)             |
-| `--dialect d`     | SQL dialect: `mariadb`, `postgres`, `sqlite` (default: auto-detect) |
-| `--exclude p,...` | Comma-separated table name patterns to exclude                      |
-| `--include p,...` | Comma-separated table name patterns to include                      |
+| Flag              | Description                                             |
+| ----------------- | ------------------------------------------------------- |
+| `--apply`         | Remove dry-run header (statements are ready to execute) |
+| `--exclude p,...` | Comma-separated table name patterns to exclude          |
+| `--include p,...` | Comma-separated table name patterns to include          |
 
 ### Extra debugging commands
 
@@ -67,12 +60,10 @@ go build -o dbml-tools .
 
 The SQL dialect used by `tosql` and `migrate` is determined in this order:
 
-1. **`--dialect` flag** — explicitly set the dialect (`mariadb`, `postgres`,
-   `sqlite`)
-2. **DSN auto-detect** (`migrate` only) — inferred from the connection string
+1. **DSN auto-detect** (`migrate` only) — inferred from the connection string
    scheme
-3. **`database_type` Project setting** — read from the DBML file
-4. **Default** — MariaDB when none of the above yields a specific dialect
+2. **`database_type` Project setting** — read from the DBML file
+3. **Default** — MariaDB when none of the above yields a specific dialect
 
 ```dbml
 Project {
@@ -81,9 +72,8 @@ Project {
 ```
 
 `todbml` writes the `database_type` setting automatically based on the database
-engine it connects to. When `todbml --normalize` is used, the `database_type` is
-set to `'normalized'`, which does not imply a specific SQL dialect — use
-`--dialect` on `tosql`/`migrate` to choose one.
+engine it connects to, even when `--normalize` is used. This means `tosql` and
+`migrate` can always auto-detect the dialect from the DBML file or the DSN.
 
 ### Type modes
 
@@ -98,9 +88,9 @@ setting records which engine they came from, so downstream tools (`tosql`,
 **Normalized** (`todbml --normalize`)\
 Type names are mapped to canonical DBML equivalents (e.g. `integer` → `int`,
 `character varying(255)` → `varchar(255)`, `bytea` → `binary`). The
-`database_type` is set to `'normalized'`. Unrecognised or vendor-specific types
-(e.g. `public.geometry`) are copied verbatim. This mode produces
-database-agnostic DBML.
+`database_type` still reflects the source engine. Unrecognised or
+vendor-specific types (e.g. `public.geometry`) are copied verbatim. This mode
+produces database-agnostic DBML.
 
 ### todbml
 
@@ -169,12 +159,7 @@ contains `records` blocks (from `todbml --data`), matching `INSERT INTO`
 statements are generated after each table.
 
 ```sh
-# Dialect determined by database_type in the file (e.g. 'PostgreSQL')
 dbml-tools tosql schema.dbml
-
-# Explicit dialect (required for normalized DBML without a database_type)
-dbml-tools tosql --dialect postgres schema.dbml
-dbml-tools tosql --dialect mariadb schema.dbml
 ```
 
 ### migrate

@@ -120,15 +120,12 @@ func Run(dsn string, sqlFS embed.FS, opts Options, normalize bool) (string, erro
 			return "", fmt.Errorf("fetch data: %w", err)
 		}
 	}
-	if normalize {
-		return GenerateDBML(filtered, "normalized", true), nil
-	}
 	engineType := map[Engine]string{
 		EnginePostgres: "PostgreSQL",
 		EngineMariaDB:  "MariaDB",
 		EngineSQLite:   "SQLite",
 	}[parsed.Engine]
-	return GenerateDBML(filtered, engineType, false), nil
+	return GenerateDBML(filtered, engineType, normalize), nil
 }
 
 // isBinaryType returns true if the column type holds binary data that should

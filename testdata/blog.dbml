@@ -1,5 +1,5 @@
 Project {
-  database_type: 'normalized'
+  database_type: 'MariaDB'
 }
 
 Table "abc_posts" {

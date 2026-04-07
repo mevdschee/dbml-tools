@@ -271,9 +271,9 @@ func TestDumpBlogSQLite(t *testing.T) {
 func TestDumpBlogDialectFromDatabase(t *testing.T) {
 	db := loadBlogDBML(t)
 	d := DialectFromDatabase(db)
-	// database_type: 'normalized' maps to Generic (caller decides the default)
-	if d != Generic {
-		t.Errorf("expected Generic dialect for 'normalized', got %d", d)
+	// database_type: 'MariaDB' maps to MariaDB
+	if d != MariaDB {
+		t.Errorf("expected MariaDB dialect, got %d", d)
 	}
 }
 
