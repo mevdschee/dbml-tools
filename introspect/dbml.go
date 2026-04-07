@@ -135,7 +135,7 @@ func writeRecords(sb *strings.Builder, rec *Record) {
 			if val == "null" {
 				sb.WriteString("null")
 			} else if strings.HasPrefix(val, "X'") {
-				sb.WriteString(val)
+				sb.WriteString("`" + val + "`")
 			} else {
 				sb.WriteString("'" + strings.ReplaceAll(val, "'", "\\'") + "'")
 			}

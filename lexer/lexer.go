@@ -277,8 +277,6 @@ func (l *Lexer) next() Token {
 		return l.single(KindOp, "/")
 	case isDigit(ch):
 		return l.scanNumeric()
-	case (ch == 'X' || ch == 'x') && l.peek() == '\'':
-		return l.scanHexString()
 	case isIdentStart(ch):
 		return l.scanIdent()
 	default:
@@ -457,19 +455,6 @@ func (l *Lexer) scanNumeric() Token {
 		for l.pos < len(l.src) && isDigit(l.src[l.pos]) {
 			l.advance()
 		}
-	}
-	return l.tok(KindNumeric, string(l.src[s:l.pos]), sp, l.curPos(), s, l.pos)
-}
-
-func (l *Lexer) scanHexString() Token {
-	s, sp := l.pos, l.curPos()
-	l.advance() // skip X/x
-	l.advance() // skip opening '
-	for l.pos < len(l.src) && l.src[l.pos] != '\'' {
-		l.advance()
-	}
-	if l.pos < len(l.src) {
-		l.advance() // skip closing '
 	}
 	return l.tok(KindNumeric, string(l.src[s:l.pos]), sp, l.curPos(), s, l.pos)
 }
