@@ -73,7 +73,10 @@ func filterSchema(schema *DBSchema, opts Options) *DBSchema {
 
 // Run is the main entry point. It parses dsn, opens the database, introspects
 // the schema using the SQL files embedded in sqlFS, and returns DBML output.
-func Run(dsn string, sqlFS embed.FS, opts Options) (string, error) {
+// When normalize is true, column types are mapped to canonical DBML equivalents
+// and database_type is set to "normalized"; otherwise native types are preserved
+// and database_type reflects the actual engine.
+func Run(dsn string, sqlFS embed.FS, opts Options, normalize bool) (string, error) {
 	parsed, err := ParseDSN(dsn)
 	if err != nil {
 		return "", err
@@ -108,10 +111,16 @@ func Run(dsn string, sqlFS embed.FS, opts Options) (string, error) {
 		return "", fmt.Errorf("introspect: %w", err)
 	}
 
-	// "normalized" indicates that column types have been mapped to canonical DBML
-	// type names (e.g. "character varying" → "varchar").  Consumers can use
-	// -d <dialect> on dump/migrate to further transform those types to SQL.
-	return GenerateDBML(filterSchema(schema, opts), "normalized"), nil
+	filtered := filterSchema(schema, opts)
+	if normalize {
+		return GenerateDBML(filtered, "normalized", true), nil
+	}
+	engineType := map[Engine]string{
+		EnginePostgres: "PostgreSQL",
+		EngineMariaDB:  "MySQL",
+		EngineSQLite:   "SQLite",
+	}[parsed.Engine]
+	return GenerateDBML(filtered, engineType, false), nil
 }
 
 // readSQL reads a SQL file from the embedded FS.

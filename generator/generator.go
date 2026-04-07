@@ -1,10 +1,9 @@
 package generator
 
 import (
+	"dbml-tools/interpreter"
 	"fmt"
 	"strings"
-
-	"dbml-tools/interpreter"
 )
 
 // Dialect represents the target SQL dialect.
@@ -19,7 +18,9 @@ const (
 )
 
 // ParseDialect parses a dialect name into a Dialect constant.
-// An empty string or "normalized" returns Generic (passthrough mode).
+// Accepts driver names (postgres, mysql, sqlite), DBML database_type values
+// (PostgreSQL, MySQL, SQLite), and aliases. An empty string or "normalized"
+// returns Generic mode.
 func ParseDialect(s string) (Dialect, error) {
 	switch strings.ToLower(s) {
 	case "", "generic", "normalized":
@@ -31,8 +32,26 @@ func ParseDialect(s string) (Dialect, error) {
 	case "sqlite":
 		return SQLite, nil
 	default:
-		return Generic, fmt.Errorf("unknown dialect %q; supported: postgres, mysql, sqlite", s)
+		return Generic, fmt.Errorf("unknown dialect %q; supported: PostgreSQL, MySQL, SQLite", s)
 	}
+}
+
+// DialectFromDatabase extracts the SQL dialect from an interpreter.Database's
+// Project.database_type setting. Returns Generic if unset or "normalized".
+func DialectFromDatabase(db *interpreter.Database) Dialect {
+	proj, ok := db.Project.(map[string]interface{})
+	if !ok {
+		return Generic
+	}
+	dt, ok := proj["databaseType"].(string)
+	if !ok {
+		return Generic
+	}
+	d, err := ParseDialect(dt)
+	if err != nil {
+		return Generic
+	}
+	return d
 }
 
 func quoteIdent(name string, d Dialect) string {

@@ -7,7 +7,9 @@ import (
 
 // GenerateDBML converts a DBSchema to a DBML string.
 // databaseType, if non-empty, is emitted as a Project block header (e.g. "PostgreSQL", "MySQL").
-func GenerateDBML(schema *DBSchema, databaseType string) string {
+// When normalize is true, column types are mapped to canonical DBML equivalents;
+// otherwise the raw SQL types from the database are preserved.
+func GenerateDBML(schema *DBSchema, databaseType string, normalize bool) string {
 	var sb strings.Builder
 
 	if databaseType != "" {
@@ -15,7 +17,7 @@ func GenerateDBML(schema *DBSchema, databaseType string) string {
 	}
 
 	for _, t := range schema.Tables {
-		writeTable(&sb, t)
+		writeTable(&sb, t, normalize)
 		sb.WriteByte('\n')
 	}
 
@@ -31,13 +33,19 @@ func GenerateDBML(schema *DBSchema, databaseType string) string {
 	return sb.String()
 }
 
-func writeTable(sb *strings.Builder, t *Table) {
+func writeTable(sb *strings.Builder, t *Table, normalize bool) {
 	sb.WriteString("Table ")
 	sb.WriteString(tableIdent(t.Schema, t.Name))
 	sb.WriteString(" {\n")
 
 	for _, col := range t.Columns {
-		dbmlType, isSerial := effectiveDBMLType(col)
+		var dbmlType string
+		var isSerial bool
+		if normalize {
+			dbmlType, isSerial = normalizedDBMLType(col)
+		} else {
+			dbmlType = col.Type
+		}
 		attrs := columnAttrs(col, isSerial)
 		if len(attrs) > 0 {
 			fmt.Fprintf(sb, "  %q %s [%s]\n", col.Name, dbmlType, strings.Join(attrs, ", "))
@@ -105,9 +113,9 @@ func writeTable(sb *strings.Builder, t *Table) {
 	sb.WriteString("}\n")
 }
 
-// effectiveDBMLType returns the DBML canonical type name and whether the column
+// normalizedDBMLType returns the DBML canonical type name and whether the column
 // is a serial (auto-increment primary key, collapsing type + increment into serial/bigserial).
-func effectiveDBMLType(col *Column) (string, bool) {
+func normalizedDBMLType(col *Column) (string, bool) {
 	base := toDBMLType(col.Type)
 	if col.IsIncrement {
 		if base == "bigint" {

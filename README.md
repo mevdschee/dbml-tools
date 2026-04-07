@@ -31,41 +31,59 @@ Commands:
   lex        <file>                                    Tokenize a DBML file and output lexer JSON
   parse      <file>                                    Parse a DBML file and output AST JSON
   interpret  <file>                                    Interpret a DBML file and output database schema JSON
-  check      [-d driver] <file>                        Check a DBML file for errors
-  introspect [--exclude p,...] [--include p,...] <dsn>
+  check      <file>                                    Check a DBML file for errors
+  introspect [--normalize] [--exclude p,...] [--include p,...] <dsn>
                                                        Connect to a database and print its schema as DBML
-  dump       [-d driver] <file>                        Generate CREATE TABLE SQL from a DBML file
-  migrate    [-d driver] [--apply] [--exclude p,...] [--include p,...] <old> <new>
+  dump       <file>                                    Generate CREATE TABLE SQL from a DBML file
+  migrate    [--apply] [--exclude p,...] [--include p,...] <old> <new>
                                                        Generate migration SQL from schema diff
 ```
+
+### How the SQL dialect is determined
+
+The SQL dialect used by `dump` and `migrate` is determined automatically from
+the `database_type` Project setting inside the DBML file:
+
+```dbml
+Project {
+  database_type: 'PostgreSQL'   // or 'MySQL', 'SQLite'
+}
+```
+
+`introspect` writes this setting automatically based on the database engine it
+connects to. When `database_type` is absent or set to `'normalized'`, a generic
+dialect is used.
 
 ### Type modes
 
 DBML column types flow through the toolchain in one of two modes:
 
-**Generic / normalized** — no `-d` flag given (or `-d normalized`)\
-Type names are normalised to canonical DBML equivalents (e.g. `integer` → `int`,
-`character varying(255)` → `varchar(255)`, `bytea` → `binary`). Unrecognised or
-vendor-specific types (e.g. `public.geometry`) are copied verbatim.
+**Native** (default for `introspect`)\
+Column types are preserved exactly as they appear in the source database
+(e.g. `character varying(255)`, `bytea`, `mediumtext`). The `database_type`
+Project setting records which engine they came from, so downstream tools
+(`dump`, `migrate`) emit the correct SQL syntax.
 
-**Dialect-specific** — `-d postgres`, `-d mysql`, or `-d sqlite` given\
-Column types are passed through unchanged — the type string from the DBML is
-emitted as-is. Only SQL syntax is dialect-specific: identifier quoting, enum
-expansion, `SERIAL`/`AUTO_INCREMENT` for `[increment]` columns, `COMMENT ON`,
-etc.
-
-The `database_type: 'normalized'` Project setting (emitted automatically by
-`introspect`) signals that column types use canonical DBML names. Tools treat
-this the same as omitting `-d`.
+**Normalized** (`introspect --normalize`)\
+Type names are mapped to canonical DBML equivalents (e.g. `integer` → `int`,
+`character varying(255)` → `varchar(255)`, `bytea` → `binary`). The
+`database_type` is set to `'normalized'`. Unrecognised or vendor-specific types
+(e.g. `public.geometry`) are copied verbatim. This mode produces
+database-agnostic DBML.
 
 ### introspect
 
 Connects to a live database, reads its schema, and outputs DBML to stdout.
+By default column types are preserved as-is from the database and a
+`database_type` Project setting is written (e.g. `'PostgreSQL'`).
+
+Pass `--normalize` to map types to database-agnostic canonical DBML equivalents
+(e.g. `character varying` → `varchar`, `bytea` → `binary`).
 
 **Supported engines:** MariaDB, PostgreSQL, SQLite.
 
 ```sh
-# MariaDB / MySQL
+# MariaDB / MySQL (native types)
 dbml-tools introspect mariadb://user:pass@host:3306/mydb
 
 # PostgreSQL (defaults to schema "public"; override with ?schema=)
@@ -74,6 +92,9 @@ dbml-tools introspect postgres://user:pass@host:5432/mydb?schema=myschema
 
 # SQLite
 dbml-tools introspect sqlite:///path/to/file.db
+
+# Normalized / database-agnostic output
+dbml-tools introspect --normalize postgres://user:pass@host:5432/mydb
 
 # Save to a file
 dbml-tools introspect sqlite:///path/to/file.db > schema.dbml
@@ -96,44 +117,28 @@ default schema.
 
 ### check
 
-Checks a DBML file for syntax and semantic errors. Without `-d`, column types
-are accepted as-is (no type validation). Pass `-d <driver>` to restrict types to
-those recognised by the given dialect.
+Checks a DBML file for syntax and semantic errors.
 
 ```sh
-# Accept any column type (generic/passthrough mode)
 dbml-tools check schema.dbml
-
-# Validate types for a specific driver
-dbml-tools check -d postgres schema.dbml
 ```
 
 ### dump
 
-Generates a `CREATE TABLE` SQL script from a DBML file.
+Generates a `CREATE TABLE` SQL script from a DBML file. The SQL dialect is
+determined by the `database_type` Project setting in the file.
 
 ```sh
-# Generic/normalized — type names are mapped to canonical DBML equivalents
+# Dialect determined by database_type in the file (e.g. 'PostgreSQL')
 dbml-tools dump schema.dbml
-
-# PostgreSQL — types passed through as-is; postgres SQL syntax applied
-dbml-tools dump -d postgres schema.dbml
-
-# MySQL / MariaDB — types passed through as-is; mysql SQL syntax applied
-dbml-tools dump -d mysql schema.dbml
-
-# SQLite — types passed through as-is; sqlite SQL syntax applied
-dbml-tools dump -d sqlite schema.dbml
 ```
-
-Supported drivers: `postgres`, `mysql`, `sqlite`. Omit `-d` for
-generic/normalized mode.
 
 ### migrate
 
 Compares two schemas and outputs the SQL statements needed to migrate from the
 first to the second. Either argument can be a DBML file path or a live database
-connection string. The dialect is auto-detected from any DSN present.
+connection string. The dialect is auto-detected from any DSN present or from the
+`database_type` Project setting in DBML files.
 
 ```sh
 # Diff two DBML files (dry-run by default)
@@ -150,9 +155,6 @@ dbml-tools migrate --apply old.dbml new.dbml | psql "$DATABASE_URL"
 
 # Exclude system or extension tables from the comparison
 dbml-tools migrate --exclude 'spatial_ref_sys,geography_columns' old.dbml postgres://...
-
-# Explicit driver when both sides are files
-dbml-tools migrate -d mysql old.dbml new.dbml
 ```
 
 By default `migrate` is a **dry run**: it prints a `-- DRY RUN` header and the
