@@ -1,0 +1,151 @@
+(* DBML Grammar Specification — BNF-like notation *)
+(* Terminals are in "quotes", non-terminals in lowercase, ? = optional, *)
+(* * = zero or more, + = one or more, | = alternatives                  *)
+
+program             = { declaration } EOF ;
+
+declaration         = table_decl
+                    | enum_decl
+                    | ref_decl
+                    | note_decl
+                    | project_decl
+                    | table_group_decl
+                    | table_partial_decl ;
+
+(* ── Table ─────────────────────────────────────────────────────────── *)
+
+table_decl          = "Table" [ schema_prefix ] table_name
+                      [ "as" alias ] [ attribute_list ]
+                      "{" { table_item } "}" ;
+
+table_item          = column_def
+                    | index_block
+                    | note_setting
+                    | partial_injection ;
+
+column_def          = column_name column_type [ attribute_list ] ;
+
+column_type         = [ schema_prefix ] type_name [ "(" type_args ")" ] ;
+
+type_args           = expression { "," expression } ;
+
+(* ── Enum ──────────────────────────────────────────────────────────── *)
+
+enum_decl           = "Enum" [ schema_prefix ] enum_name
+                      "{" { enum_value } "}" ;
+
+enum_value          = identifier [ attribute_list ] ;
+
+(* ── Ref (relationship) ────────────────────────────────────────────── *)
+
+ref_decl            = "Ref" [ ref_name ] ":" ref_expr [ attribute_list ]
+                    | "Ref" [ ref_name ] "{" { ref_line } "}" ;
+
+ref_line            = ref_expr [ attribute_list ] ;
+
+ref_expr            = ref_endpoint rel_op ref_endpoint ;
+
+ref_endpoint        = column_ref
+                    | [ schema_prefix ] table_name
+                      "." "(" column_name { "," column_name } ")" ;
+
+column_ref          = [ schema_prefix ] table_name "." column_name ;
+
+rel_op              = ">"           (* many-to-one   *)
+                    | "<"           (* one-to-many   *)
+                    | "-"           (* one-to-one    *)
+                    | "<>" ;        (* many-to-many  *)
+
+(* ── Note ──────────────────────────────────────────────────────────── *)
+
+note_decl           = "Note" ":" string
+                    | "Note" "{" string "}" ;
+
+note_setting        = "Note" ":" string ;
+
+(* ── Project ───────────────────────────────────────────────────────── *)
+
+project_decl        = "Project" project_name "{" { project_field } "}" ;
+
+project_field       = identifier ":" value ;
+
+(* ── TableGroup ────────────────────────────────────────────────────── *)
+
+table_group_decl    = "TableGroup" group_name "{" { table_ref } "}" ;
+
+table_ref           = [ schema_prefix ] table_name ;
+
+(* ── TablePartial ──────────────────────────────────────────────────── *)
+
+table_partial_decl  = "TablePartial" partial_name
+                      "{" { column_def } "}" ;
+
+partial_injection   = "~" identifier ;
+
+(* ── Indexes ───────────────────────────────────────────────────────── *)
+
+index_block         = "indexes" "{" { index_def } "}" ;
+
+index_def           = index_columns [ attribute_list ] ;
+
+index_columns       = column_name
+                    | "(" column_name { "," column_name } ")" ;
+
+(* ── Attribute list (settings) ─────────────────────────────────────── *)
+
+attribute_list      = "[" attribute { "," attribute } "]" ;
+
+attribute           = identifier_stream
+                    | identifier ":" attr_value ;
+
+identifier_stream   = identifier { identifier } ;
+                      (* e.g. "primary key", "not null" *)
+
+attr_value          = string
+                    | number
+                    | boolean
+                    | "null"
+                    | color
+                    | function_expr
+                    | column_ref
+                    | rel_op column_ref ;
+
+(* ── Shared helpers ────────────────────────────────────────────────── *)
+
+schema_prefix       = identifier "." ;
+
+expression          = string | number | boolean | "null"
+                    | identifier | function_expr ;
+
+value               = string | number | boolean | "null"
+                    | function_expr | identifier ;
+
+(* ── Lexical rules ─────────────────────────────────────────────────── *)
+
+identifier          = ( letter | "_" ) { letter | digit | "_" }
+                    | quoted_identifier ;
+
+quoted_identifier   = '"' { char } '"' ;
+
+string              = "'" { char } "'"
+                    | "'''" { char } "'''" ;
+
+number              = digit { digit } [ "." digit { digit } ]
+                      [ ( "e" | "E" ) [ "+" | "-" ] digit { digit } ] ;
+
+boolean             = "true" | "false" ;
+
+color               = "#" hex { hex } ;
+
+function_expr       = "`" { char } "`" ;
+
+(* ── Lexical atoms ─────────────────────────────────────────────────── *)
+
+letter              = "a".."z" | "A".."Z" ;
+digit               = "0".."9" ;
+hex                 = digit | "a".."f" | "A".."F" ;
+
+(* ── Comments (ignored) ───────────────────────────────────────────── *)
+
+single_line_comment = "//" { char } NEWLINE ;
+multi_line_comment  = "/*" { char } "*/" ;

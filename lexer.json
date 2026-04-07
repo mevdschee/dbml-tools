@@ -1,0 +1,410 @@
+[
+  {
+    "kind": "<identifier>",
+    "value": "Table",
+    "position": {
+      "line": 4,
+      "column": 1
+    }
+  },
+  {
+    "kind": "<identifier>",
+    "value": "users",
+    "position": {
+      "line": 4,
+      "column": 7
+    }
+  },
+  {
+    "kind": "<lbrace>",
+    "value": "{",
+    "position": {
+      "line": 4,
+      "column": 13
+    }
+  },
+  {
+    "kind": "<identifier>",
+    "value": "id",
+    "position": {
+      "line": 5,
+      "column": 3
+    }
+  },
+  {
+    "kind": "<identifier>",
+    "value": "integer",
+    "position": {
+      "line": 5,
+      "column": 6
+    }
+  },
+  {
+    "kind": "<lbracket>",
+    "value": "[",
+    "position": {
+      "line": 5,
+      "column": 14
+    }
+  },
+  {
+    "kind": "<identifier>",
+    "value": "primary",
+    "position": {
+      "line": 5,
+      "column": 15
+    }
+  },
+  {
+    "kind": "<identifier>",
+    "value": "key",
+    "position": {
+      "line": 5,
+      "column": 23
+    }
+  },
+  {
+    "kind": "<rbracket>",
+    "value": "]",
+    "position": {
+      "line": 5,
+      "column": 26
+    }
+  },
+  {
+    "kind": "<identifier>",
+    "value": "username",
+    "position": {
+      "line": 6,
+      "column": 3
+    }
+  },
+  {
+    "kind": "<identifier>",
+    "value": "varchar",
+    "position": {
+      "line": 6,
+      "column": 12
+    }
+  },
+  {
+    "kind": "<identifier>",
+    "value": "role",
+    "position": {
+      "line": 7,
+      "column": 3
+    }
+  },
+  {
+    "kind": "<identifier>",
+    "value": "varchar",
+    "position": {
+      "line": 7,
+      "column": 8
+    }
+  },
+  {
+    "kind": "<identifier>",
+    "value": "created_at",
+    "position": {
+      "line": 8,
+      "column": 3
+    }
+  },
+  {
+    "kind": "<identifier>",
+    "value": "timestamp",
+    "position": {
+      "line": 8,
+      "column": 14
+    }
+  },
+  {
+    "kind": "<rbrace>",
+    "value": "}",
+    "position": {
+      "line": 9,
+      "column": 1
+    }
+  },
+  {
+    "kind": "<identifier>",
+    "value": "Table",
+    "position": {
+      "line": 11,
+      "column": 1
+    }
+  },
+  {
+    "kind": "<identifier>",
+    "value": "posts",
+    "position": {
+      "line": 11,
+      "column": 7
+    }
+  },
+  {
+    "kind": "<lbrace>",
+    "value": "{",
+    "position": {
+      "line": 11,
+      "column": 13
+    }
+  },
+  {
+    "kind": "<identifier>",
+    "value": "id",
+    "position": {
+      "line": 12,
+      "column": 3
+    }
+  },
+  {
+    "kind": "<identifier>",
+    "value": "integer",
+    "position": {
+      "line": 12,
+      "column": 6
+    }
+  },
+  {
+    "kind": "<lbracket>",
+    "value": "[",
+    "position": {
+      "line": 12,
+      "column": 14
+    }
+  },
+  {
+    "kind": "<identifier>",
+    "value": "primary",
+    "position": {
+      "line": 12,
+      "column": 15
+    }
+  },
+  {
+    "kind": "<identifier>",
+    "value": "key",
+    "position": {
+      "line": 12,
+      "column": 23
+    }
+  },
+  {
+    "kind": "<rbracket>",
+    "value": "]",
+    "position": {
+      "line": 12,
+      "column": 26
+    }
+  },
+  {
+    "kind": "<identifier>",
+    "value": "title",
+    "position": {
+      "line": 13,
+      "column": 3
+    }
+  },
+  {
+    "kind": "<identifier>",
+    "value": "varchar",
+    "position": {
+      "line": 13,
+      "column": 9
+    }
+  },
+  {
+    "kind": "<identifier>",
+    "value": "body",
+    "position": {
+      "line": 14,
+      "column": 3
+    }
+  },
+  {
+    "kind": "<identifier>",
+    "value": "text",
+    "position": {
+      "line": 14,
+      "column": 8
+    }
+  },
+  {
+    "kind": "<lbracket>",
+    "value": "[",
+    "position": {
+      "line": 14,
+      "column": 13
+    }
+  },
+  {
+    "kind": "<identifier>",
+    "value": "note",
+    "position": {
+      "line": 14,
+      "column": 14
+    }
+  },
+  {
+    "kind": "<colon>",
+    "value": ":",
+    "position": {
+      "line": 14,
+      "column": 18
+    }
+  },
+  {
+    "kind": "<string>",
+    "value": "Content of the post",
+    "position": {
+      "line": 14,
+      "column": 20
+    }
+  },
+  {
+    "kind": "<rbracket>",
+    "value": "]",
+    "position": {
+      "line": 14,
+      "column": 41
+    }
+  },
+  {
+    "kind": "<identifier>",
+    "value": "user_id",
+    "position": {
+      "line": 15,
+      "column": 3
+    }
+  },
+  {
+    "kind": "<identifier>",
+    "value": "integer",
+    "position": {
+      "line": 15,
+      "column": 11
+    }
+  },
+  {
+    "kind": "<identifier>",
+    "value": "status",
+    "position": {
+      "line": 16,
+      "column": 3
+    }
+  },
+  {
+    "kind": "<identifier>",
+    "value": "varchar",
+    "position": {
+      "line": 16,
+      "column": 10
+    }
+  },
+  {
+    "kind": "<identifier>",
+    "value": "created_at",
+    "position": {
+      "line": 17,
+      "column": 3
+    }
+  },
+  {
+    "kind": "<identifier>",
+    "value": "timestamp",
+    "position": {
+      "line": 17,
+      "column": 14
+    }
+  },
+  {
+    "kind": "<rbrace>",
+    "value": "}",
+    "position": {
+      "line": 18,
+      "column": 1
+    }
+  },
+  {
+    "kind": "<identifier>",
+    "value": "Ref",
+    "position": {
+      "line": 20,
+      "column": 1
+    }
+  },
+  {
+    "kind": "<colon>",
+    "value": ":",
+    "position": {
+      "line": 20,
+      "column": 4
+    }
+  },
+  {
+    "kind": "<identifier>",
+    "value": "posts",
+    "position": {
+      "line": 20,
+      "column": 6
+    }
+  },
+  {
+    "kind": "<op>",
+    "value": ".",
+    "position": {
+      "line": 20,
+      "column": 11
+    }
+  },
+  {
+    "kind": "<identifier>",
+    "value": "user_id",
+    "position": {
+      "line": 20,
+      "column": 12
+    }
+  },
+  {
+    "kind": "<op>",
+    "value": ">",
+    "position": {
+      "line": 20,
+      "column": 20
+    }
+  },
+  {
+    "kind": "<identifier>",
+    "value": "users",
+    "position": {
+      "line": 20,
+      "column": 22
+    }
+  },
+  {
+    "kind": "<op>",
+    "value": ".",
+    "position": {
+      "line": 20,
+      "column": 27
+    }
+  },
+  {
+    "kind": "<identifier>",
+    "value": "id",
+    "position": {
+      "line": 20,
+      "column": 28
+    }
+  },
+  {
+    "kind": "<eof>",
+    "value": "",
+    "position": {
+      "line": 20,
+      "column": 45
+    }
+  }
+]
