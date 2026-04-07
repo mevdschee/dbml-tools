@@ -24,15 +24,12 @@ go build -o dbml-tools .
 
 ## Commands
 
-| Command                         | Description                                           |
-| ------------------------------- | ----------------------------------------------------- |
-| `lex <file>`                    | Tokenize a DBML file and output lexer JSON            |
-| `parse <file>`                  | Parse a DBML file and output AST JSON                 |
-| `interpret <file>`              | Interpret a DBML file and output database schema JSON |
-| `check <file>`                  | Check a DBML file for parse/semantic errors           |
-| `todbml [options] <dsn>`        | Connect to a database and print its schema as DBML    |
-| `tosql [options] <file>`        | Generate CREATE TABLE SQL from a DBML file            |
-| `migrate [options] <old> <new>` | Generate migration SQL from schema diff               |
+| Command                         | Description                                        |
+| ------------------------------- | -------------------------------------------------- |
+| `check <file>`                  | Check a DBML file for parse/semantic errors        |
+| `todbml [options] <dsn>`        | Connect to a database and print its schema as DBML |
+| `tosql [options] <file>`        | Generate CREATE TABLE SQL from a DBML file         |
+| `migrate [options] <old> <new>` | Generate migration SQL from schema diff            |
 
 ### todbml options
 
@@ -57,6 +54,14 @@ go build -o dbml-tools .
 | `--dialect d`     | SQL dialect: `mariadb`, `postgres`, `sqlite` (default: auto-detect) |
 | `--exclude p,...` | Comma-separated table name patterns to exclude                      |
 | `--include p,...` | Comma-separated table name patterns to include                      |
+
+### Extra debugging commands
+
+| Command            | Description                                           |
+| ------------------ | ----------------------------------------------------- |
+| `lex <file>`       | Tokenize a DBML file and output lexer JSON            |
+| `parse <file>`     | Parse a DBML file and output AST JSON                 |
+| `interpret <file>` | Interpret a DBML file and output database schema JSON |
 
 ### How the SQL dialect is determined
 
