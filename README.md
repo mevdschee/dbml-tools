@@ -45,10 +45,10 @@ go build -o dbml-tools .
 
 ### migrate options
 
-| Flag              | Description                                             |
-| ----------------- | ------------------------------------------------------- |
-| `--exclude p,...` | Comma-separated table name patterns to exclude          |
-| `--include p,...` | Comma-separated table name patterns to include          |
+| Flag              | Description                                    |
+| ----------------- | ---------------------------------------------- |
+| `--exclude p,...` | Comma-separated table name patterns to exclude |
+| `--include p,...` | Comma-separated table name patterns to include |
 
 ### Extra debugging commands
 
@@ -93,8 +93,8 @@ Type names are mapped to canonical DBML equivalents (e.g. `integer` → `int`,
 `character varying(255)` → `varchar(255)`, `bytea` → `binary`). The
 `database_type` is set to `'<engine> normalized'` (e.g. `'MariaDB normalized'`)
 so that downstream tools know both the source engine and that types are
-normalized. Unrecognised or vendor-specific types (e.g. `public.geometry`) are
-copied verbatim. This mode produces database-agnostic DBML.
+normalized. Unrecognised or vendor-specific types (e.g. `geometry`) are copied
+verbatim. This mode produces database-agnostic DBML.
 
 ### todbml
 
@@ -186,7 +186,8 @@ dbml-tools todot schema.dbml | dot -Tpng -o schema.png
 dbml-tools todot schema.dbml | dot -Tsvg -o schema.svg
 ```
 
-Requires [Graphviz](https://graphviz.org/) (`dot`) to be installed for rendering.
+Requires [Graphviz](https://graphviz.org/) (`dot`) to be installed for
+rendering.
 
 ### migrate
 
