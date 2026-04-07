@@ -558,6 +558,12 @@ func (p *Parser) parseBlockExpr() *BlockExprNode {
 	open := p.expect(lexer.KindLBrace)
 	var body []Node
 	for p.cur().Kind != lexer.KindRBrace && p.cur().Kind != lexer.KindEOF {
+		// Nested brace block (e.g. records/indexes body inside a table block):
+		// consume it as a sub-block so the inner } doesn't close the outer block.
+		if p.cur().Kind == lexer.KindLBrace {
+			body = append(body, p.parseBlockExpr())
+			continue
+		}
 		item := p.parseFuncApp()
 		if item != nil {
 			body = append(body, item)

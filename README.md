@@ -41,28 +41,35 @@ Commands:
 
 ### How the SQL dialect is determined
 
-The SQL dialect used by `tosql` and `migrate` is determined automatically from
-the `database_type` Project setting inside the DBML file:
+The SQL dialect used by `tosql` and `migrate` is determined in this order:
+
+1. **`--dialect` flag** — explicitly set the dialect (`mariadb`, `postgres`,
+   `sqlite`)
+2. **DSN auto-detect** (`migrate` only) — inferred from the connection string
+   scheme
+3. **`database_type` Project setting** — read from the DBML file
+4. **Default** — MariaDB when none of the above yields a specific dialect
 
 ```dbml
 Project {
-  database_type: 'PostgreSQL'   // or 'MySQL', 'SQLite'
+  database_type: 'PostgreSQL'   // or 'MariaDB', 'SQLite'
 }
 ```
 
-`todbml` writes this setting automatically based on the database engine it
-connects to. When `database_type` is absent or set to `'normalized'`, a generic
-dialect is used.
+`todbml` writes the `database_type` setting automatically based on the database
+engine it connects to. When `todbml --normalize` is used, the `database_type` is
+set to `'normalized'`, which does not imply a specific SQL dialect — use
+`--dialect` on `tosql`/`migrate` to choose one.
 
 ### Type modes
 
 DBML column types flow through the toolchain in one of two modes:
 
 **Native** (default for `todbml`)\
-Column types are preserved exactly as they appear in the source database
-(e.g. `character varying(255)`, `bytea`, `mediumtext`). The `database_type`
-Project setting records which engine they came from, so downstream tools
-(`tosql`, `migrate`) emit the correct SQL syntax.
+Column types are preserved exactly as they appear in the source database (e.g.
+`character varying(255)`, `bytea`, `mediumtext`). The `database_type` Project
+setting records which engine they came from, so downstream tools (`tosql`,
+`migrate`) emit the correct SQL syntax.
 
 **Normalized** (`todbml --normalize`)\
 Type names are mapped to canonical DBML equivalents (e.g. `integer` → `int`,
@@ -73,9 +80,9 @@ database-agnostic DBML.
 
 ### todbml
 
-Connects to a live database, reads its schema, and outputs DBML to stdout.
-By default column types are preserved as-is from the database and a
-`database_type` Project setting is written (e.g. `'PostgreSQL'`).
+Connects to a live database, reads its schema, and outputs DBML to stdout. By
+default column types are preserved as-is from the database and a `database_type`
+Project setting is written (e.g. `'PostgreSQL'`).
 
 Pass `--normalize` to map types to database-agnostic canonical DBML equivalents
 (e.g. `character varying` → `varchar`, `bytea` → `binary`).
@@ -83,7 +90,7 @@ Pass `--normalize` to map types to database-agnostic canonical DBML equivalents
 **Supported engines:** MariaDB, PostgreSQL, SQLite.
 
 ```sh
-# MariaDB / MySQL (native types)
+# MariaDB (native types)
 dbml-tools todbml mariadb://user:pass@host:3306/mydb
 
 # PostgreSQL (defaults to schema "public"; override with ?schema=)
@@ -105,9 +112,16 @@ dbml-tools todbml --exclude 'tmp_*,_*' mariadb://...
 
 # Include only specific tables
 dbml-tools todbml --include 'orders,order_*' postgres://...
+
+# Export schema together with row data
+dbml-tools todbml --data mariadb://user:pass@host:3306/mydb
 ```
 
 > **Note:** flags must be placed before the DSN argument.
+
+**`--data`** also fetches all rows from each table and emits them as DBML
+`records` blocks. Binary column types (`binary`, `varbinary`, `blob`, `bytea`,
+`bit`, `geometry`, `point`, etc.) are hex-encoded using `X'...'` notation.
 
 **Filter patterns** support `*` (any sequence of characters) and `?` (any single
 character), matched case-insensitively. Comma-separate multiple patterns.
@@ -126,11 +140,17 @@ dbml-tools check schema.dbml
 ### tosql
 
 Generates a `CREATE TABLE` SQL script from a DBML file. The SQL dialect is
-determined by the `database_type` Project setting in the file.
+determined by the `database_type` Project setting in the file. If the DBML
+contains `records` blocks (from `todbml --data`), matching `INSERT INTO`
+statements are generated after each table.
 
 ```sh
 # Dialect determined by database_type in the file (e.g. 'PostgreSQL')
 dbml-tools tosql schema.dbml
+
+# Explicit dialect (required for normalized DBML without a database_type)
+dbml-tools tosql --dialect postgres schema.dbml
+dbml-tools tosql --dialect mariadb schema.dbml
 ```
 
 ### migrate
@@ -150,7 +170,7 @@ dbml-tools migrate schema.dbml postgres://user:pass@host/db
 # Compare two live databases
 dbml-tools migrate mariadb://host/db1 mariadb://host/db2
 
-# Remove the dry-run header (output is ready to pipe into psql / mysql)
+# Remove the dry-run header (output is ready to pipe into psql / mariadb)
 dbml-tools migrate --apply old.dbml new.dbml | psql "$DATABASE_URL"
 
 # Exclude system or extension tables from the comparison

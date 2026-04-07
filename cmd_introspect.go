@@ -16,10 +16,11 @@ var sqlFiles embed.FS
 func doToDBML(args []string) {
 	fs := flag.NewFlagSet("todbml", flag.ExitOnError)
 	normalize := fs.Bool("normalize", false, "normalize column types to database-agnostic DBML equivalents")
+	data := fs.Bool("data", false, "also export row data as DBML records blocks")
 	excludeStr := fs.String("exclude", "", "comma-separated table name patterns to exclude (supports * glob)")
 	includeStr := fs.String("include", "", "comma-separated table name patterns to include (all others excluded)")
 	fs.Usage = func() {
-		fmt.Fprintf(os.Stderr, "Usage: dbml-tools todbml [--normalize] [--exclude pattern,...] [--include pattern,...] <dsn>\n")
+		fmt.Fprintf(os.Stderr, "Usage: dbml-tools todbml [--normalize] [--data] [--exclude pattern,...] [--include pattern,...] <dsn>\n")
 		fs.PrintDefaults()
 	}
 	fs.Parse(args) //nolint:errcheck
@@ -32,6 +33,7 @@ func doToDBML(args []string) {
 	opts := introspect.Options{
 		Exclude: parseCSV(*excludeStr),
 		Include: parseCSV(*includeStr),
+		Data:    *data,
 	}
 
 	dbml, err := introspect.Run(fs.Arg(0), sqlFiles, opts, *normalize)

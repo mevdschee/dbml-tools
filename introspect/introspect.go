@@ -5,6 +5,7 @@ package introspect
 import (
 	"database/sql"
 	"embed"
+	"encoding/hex"
 	"fmt"
 	"path"
 	"strings"
@@ -20,6 +21,8 @@ type Options struct {
 	Include []string
 	// Exclude: tables whose names match any of these patterns are omitted.
 	Exclude []string
+	// Data: when true, also fetch row data for each table.
+	Data bool
 }
 
 func (o Options) shouldInclude(name string) bool {
@@ -112,15 +115,118 @@ func Run(dsn string, sqlFS embed.FS, opts Options, normalize bool) (string, erro
 	}
 
 	filtered := filterSchema(schema, opts)
+	if opts.Data {
+		if err := fetchData(db, filtered, parsed.Engine); err != nil {
+			return "", fmt.Errorf("fetch data: %w", err)
+		}
+	}
 	if normalize {
 		return GenerateDBML(filtered, "normalized", true), nil
 	}
 	engineType := map[Engine]string{
 		EnginePostgres: "PostgreSQL",
-		EngineMariaDB:  "MySQL",
+		EngineMariaDB:  "MariaDB",
 		EngineSQLite:   "SQLite",
 	}[parsed.Engine]
 	return GenerateDBML(filtered, engineType, false), nil
+}
+
+// isBinaryType returns true if the column type holds binary data that should
+// be hex-encoded in DBML records output.
+func isBinaryType(colType string) bool {
+	lower := strings.ToLower(colType)
+	// Strip any size suffix, e.g. "binary(16)" → "binary"
+	if i := strings.Index(lower, "("); i >= 0 {
+		lower = lower[:i]
+	}
+	switch lower {
+	case "binary", "varbinary", "blob", "tinyblob", "mediumblob", "longblob",
+		"bytea", "bit",
+		"geometry", "point", "linestring", "polygon",
+		"multipoint", "multilinestring", "multipolygon", "geometrycollection":
+		return true
+	}
+	return false
+}
+
+// fetchData queries all rows from each table and populates Table.Records.
+func fetchData(db *sql.DB, schema *DBSchema, engine Engine) error {
+	for _, t := range schema.Tables {
+		colNames := make([]string, len(t.Columns))
+		binaryCols := make([]bool, len(t.Columns))
+		for i, c := range t.Columns {
+			colNames[i] = c.Name
+			binaryCols[i] = isBinaryType(c.Type)
+		}
+
+		var quotedCols []string
+		for _, name := range colNames {
+			quotedCols = append(quotedCols, quoteIdentSQL(name, engine))
+		}
+		query := fmt.Sprintf("SELECT %s FROM %s",
+			strings.Join(quotedCols, ", "),
+			quoteIdentSQL(t.Name, engine))
+
+		rows, err := db.Query(query)
+		if err != nil {
+			return fmt.Errorf("select %s: %w", t.Name, err)
+		}
+
+		var dataRows [][]string
+		nCols := len(colNames)
+		for rows.Next() {
+			ptrs := make([]interface{}, nCols)
+			for i := range ptrs {
+				if binaryCols[i] {
+					ptrs[i] = new(sql.RawBytes)
+				} else {
+					ptrs[i] = new(sql.NullString)
+				}
+			}
+			if err := rows.Scan(ptrs...); err != nil {
+				rows.Close()
+				return fmt.Errorf("scan %s: %w", t.Name, err)
+			}
+			row := make([]string, nCols)
+			for i := range ptrs {
+				if binaryCols[i] {
+					raw := ptrs[i].(*sql.RawBytes)
+					if *raw == nil {
+						row[i] = "null"
+					} else {
+						row[i] = "X'" + hex.EncodeToString(*raw) + "'"
+					}
+				} else {
+					v := ptrs[i].(*sql.NullString)
+					if v.Valid {
+						row[i] = v.String
+					} else {
+						row[i] = "null"
+					}
+				}
+			}
+			dataRows = append(dataRows, row)
+		}
+		rows.Close()
+		if err := rows.Err(); err != nil {
+			return fmt.Errorf("rows %s: %w", t.Name, err)
+		}
+
+		if len(dataRows) > 0 {
+			t.Records = &Record{Columns: colNames, Rows: dataRows}
+		}
+	}
+	return nil
+}
+
+// quoteIdentSQL quotes an identifier for use in a SQL query.
+func quoteIdentSQL(name string, engine Engine) string {
+	switch engine {
+	case EngineMariaDB:
+		return "`" + strings.ReplaceAll(name, "`", "``") + "`"
+	default:
+		return `"` + strings.ReplaceAll(name, `"`, `""`) + `"`
+	}
 }
 
 // readSQL reads a SQL file from the embedded FS.

@@ -13,26 +13,26 @@ const (
 	// Generic is a passthrough dialect: types are emitted as-is without normalization or validation.
 	Generic Dialect = iota
 	Postgres
-	MySQL
+	MariaDB
 	SQLite
 )
 
 // ParseDialect parses a dialect name into a Dialect constant.
-// Accepts driver names (postgres, mysql, sqlite), DBML database_type values
-// (PostgreSQL, MySQL, SQLite), and aliases. An empty string or "normalized"
+// Accepts driver names (postgres, mariadb, sqlite), DBML database_type values
+// (PostgreSQL, MariaDB, SQLite), and aliases. An empty string or "normalized"
 // returns Generic mode.
 func ParseDialect(s string) (Dialect, error) {
 	switch strings.ToLower(s) {
 	case "", "generic", "normalized":
-		return MySQL, nil
+		return Generic, nil
 	case "postgres", "postgresql", "pg":
 		return Postgres, nil
-	case "mysql", "mariadb":
-		return MySQL, nil
+	case "MariaDB", "mariadb":
+		return MariaDB, nil
 	case "sqlite":
 		return SQLite, nil
 	default:
-		return Generic, fmt.Errorf("unknown dialect %q; supported: PostgreSQL, MySQL, SQLite", s)
+		return Generic, fmt.Errorf("unknown dialect %q; supported: mariadb, postgres, sqlite", s)
 	}
 }
 
@@ -55,7 +55,7 @@ func DialectFromDatabase(db *interpreter.Database) Dialect {
 }
 
 func quoteIdent(name string, d Dialect) string {
-	if d == MySQL {
+	if d == MariaDB {
 		return "`" + strings.ReplaceAll(name, "`", "``") + "`"
 	}
 	// Generic, Postgres, SQLite all use ANSI double-quote identifiers.
@@ -105,7 +105,7 @@ func findEnum(typeName string, db *interpreter.Database) *interpreter.Enum {
 // (e.g. "integer" → "int", "character varying" → "varchar"). Unrecognised
 // types are copied as-is to support custom/vendor-specific types.
 //
-// Dialect-specific modes (Postgres, MySQL, SQLite) pass types through unchanged;
+// Dialect-specific modes (Postgres, MariaDB, SQLite) pass types through unchanged;
 // only SQL syntax (identifier quoting, enum expansion, auto-increment keywords,
 // etc.) is affected by the dialect.
 func mapType(typeName string, args []string, d Dialect, db *interpreter.Database) (string, bool) {
@@ -119,7 +119,7 @@ func mapType(typeName string, args []string, d Dialect, db *interpreter.Database
 		// Enum types still need expansion because not all dialects support named types.
 		if e := findEnum(typeName, db); e != nil {
 			switch d {
-			case MySQL:
+			case MariaDB:
 				vals := make([]string, len(e.Values))
 				for i, v := range e.Values {
 					vals[i] = "'" + strings.ReplaceAll(v.Name, "'", "''") + "'"
@@ -137,12 +137,12 @@ func mapType(typeName string, args []string, d Dialect, db *interpreter.Database
 			if d == Postgres {
 				return "SERIAL", true
 			}
-			return "int", true // MySQL/SQLite: bare int; AUTO_INCREMENT added by renderColumn
+			return "int", true // MariaDB/SQLite: bare int; AUTO_INCREMENT added by renderColumn
 		case "bigserial":
 			if d == Postgres {
 				return "BIGSERIAL", true
 			}
-			return "bigint", true // MySQL/SQLite: bare bigint
+			return "bigint", true // MariaDB/SQLite: bare bigint
 		}
 		return typeName + argStr, false
 	}
@@ -220,13 +220,13 @@ func renderDefault(def *interpreter.Default, d Dialect) string {
 		return v
 	case "boolean":
 		if strings.EqualFold(v, "true") {
-			if d == MySQL || d == SQLite {
+			if d == MariaDB || d == SQLite {
 				return "1"
 			}
 			return "TRUE"
 		}
 		if strings.EqualFold(v, "false") {
-			if d == MySQL || d == SQLite {
+			if d == MariaDB || d == SQLite {
 				return "0"
 			}
 			return "FALSE"
@@ -256,8 +256,8 @@ func renderColumn(col interpreter.Column, inlinePK bool, d Dialect, db *interpre
 		isSerialType = true
 	}
 
-	// For MySQL with serial type or [increment]: append AUTO_INCREMENT keyword.
-	if d == MySQL && isAutoInc {
+	// For MariaDB with serial type or [increment]: append AUTO_INCREMENT keyword.
+	if d == MariaDB && isAutoInc {
 		sqlType += " AUTO_INCREMENT"
 	}
 	// Generic and SQLite: no auto-increment keyword; the type string is emitted as-is.
@@ -288,8 +288,8 @@ func renderColumn(col interpreter.Column, inlinePK bool, d Dialect, db *interpre
 		}
 	}
 
-	// MySQL: inline column comment
-	if d == MySQL && col.Note != nil && col.Note.Value != "" {
+	// MariaDB: inline column comment
+	if d == MariaDB && col.Note != nil && col.Note.Value != "" {
 		parts = append(parts, "COMMENT '"+strings.ReplaceAll(col.Note.Value, "'", "''")+"'")
 	}
 
@@ -338,7 +338,7 @@ func createTableSQL(tbl interpreter.Table, db *interpreter.Database, d Dialect) 
 	}
 
 	sb.WriteString(strings.Join(lines, ",\n"))
-	if d == MySQL && tbl.Note != nil && tbl.Note.Value != "" {
+	if d == MariaDB && tbl.Note != nil && tbl.Note.Value != "" {
 		sb.WriteString("\n) COMMENT = '" + strings.ReplaceAll(tbl.Note.Value, "'", "''") + "';\n")
 	} else {
 		sb.WriteString("\n);\n")
@@ -430,6 +430,39 @@ func commentStatements(db *interpreter.Database, d Dialect) []string {
 	return stmts
 }
 
+// insertSQL generates INSERT INTO statements from a table's records data.
+func insertSQL(tbl interpreter.Table, d Dialect) string {
+	rec := tbl.Records
+	var sb strings.Builder
+
+	cols := make([]string, len(rec.Columns))
+	for i, c := range rec.Columns {
+		cols[i] = quoteIdent(c, d)
+	}
+	header := fmt.Sprintf("INSERT INTO %s (%s) VALUES\n",
+		quoteIdent(tbl.Name, d), strings.Join(cols, ", "))
+
+	sb.WriteString(header)
+	for i, row := range rec.Rows {
+		vals := make([]string, len(row))
+		for j, v := range row {
+			if v == "null" {
+				vals[j] = "NULL"
+			} else if strings.HasPrefix(v, "X'") {
+				vals[j] = v
+			} else {
+				vals[j] = "'" + strings.ReplaceAll(v, "'", "''") + "'"
+			}
+		}
+		if i < len(rec.Rows)-1 {
+			sb.WriteString("(" + strings.Join(vals, ", ") + "),\n")
+		} else {
+			sb.WriteString("(" + strings.Join(vals, ", ") + ");\n")
+		}
+	}
+	return sb.String()
+}
+
 // Dump generates a full CREATE TABLE script for the given schema and dialect.
 func Dump(db *interpreter.Database, d Dialect) string {
 	var sb strings.Builder
@@ -444,6 +477,9 @@ func Dump(db *interpreter.Database, d Dialect) string {
 
 	for _, tbl := range db.Tables {
 		sb.WriteString(createTableSQL(tbl, db, d))
+		if tbl.Records != nil && len(tbl.Records.Rows) > 0 {
+			sb.WriteString(insertSQL(tbl, d))
+		}
 		sb.WriteString("\n")
 	}
 
@@ -604,7 +640,7 @@ func diffTable(oldTbl, newTbl interpreter.Table, oldDB, newDB *interpreter.Datab
 				stmts = append(stmts, fmt.Sprintf(
 					"ALTER TABLE %s ALTER COLUMN %s TYPE %s;",
 					tblRef, quoteIdent(newCol.Name, d), newSQL))
-			case MySQL:
+			case MariaDB:
 				colDef := renderColumn(newCol, false, d, newDB)
 				stmts = append(stmts, fmt.Sprintf(
 					"ALTER TABLE %s MODIFY COLUMN %s;", tblRef, colDef))
@@ -625,7 +661,7 @@ func diffTable(oldTbl, newTbl interpreter.Table, oldDB, newDB *interpreter.Datab
 						"ALTER TABLE %s ALTER COLUMN %s DROP NOT NULL;",
 						tblRef, quoteIdent(newCol.Name, d)))
 				}
-			case MySQL:
+			case MariaDB:
 				colDef := renderColumn(newCol, false, d, newDB)
 				stmts = append(stmts, fmt.Sprintf(
 					"ALTER TABLE %s MODIFY COLUMN %s;", tblRef, colDef))

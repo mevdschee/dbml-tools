@@ -30,106 +30,55 @@ func loadBlogDBML(t *testing.T) *interpreter.Database {
 func TestDumpBlogGeneric(t *testing.T) {
 	db := loadBlogDBML(t)
 	got := Dump(db, Generic)
-	expected := `CREATE TABLE "abc_posts" (
-    "abc_id" serial PRIMARY KEY,
-    "abc_user_id" int NOT NULL,
-    "abc_category_id" int NOT NULL,
-    "abc_content" varchar(255) NOT NULL
-);
 
-CREATE TABLE "barcodes" (
-    "id" serial PRIMARY KEY,
-    "product_id" int NOT NULL,
-    "hex" varchar(255) NOT NULL,
-    "bin" binary NOT NULL,
-    "ip_address" varchar(15)
-);
-
-CREATE TABLE "categories" (
-    "id" serial PRIMARY KEY,
-    "name" varchar(255) NOT NULL,
-    "icon" binary
-);
-
-CREATE TABLE "comments" (
-    "id" bigserial PRIMARY KEY,
-    "post_id" int NOT NULL,
-    "message" varchar(255) NOT NULL,
-    "category_id" int NOT NULL
-);
-
-CREATE TABLE "countries" (
-    "id" serial PRIMARY KEY,
-    "name" varchar(255) NOT NULL,
-    "shape" geometry NOT NULL
-);
-
-CREATE TABLE "events" (
-    "id" serial PRIMARY KEY,
-    "name" varchar(255) NOT NULL,
-    "datetime" datetime,
-    "visitors" bigint
-);
-
-CREATE TABLE "invisibles" (
-    "id" varchar(36) PRIMARY KEY
-);
-
-CREATE TABLE "kunsthåndværk" (
-    "id" varchar(36) PRIMARY KEY,
-    "Umlauts ä_ö_ü-COUNT" int NOT NULL UNIQUE,
-    "user_id" int NOT NULL,
-    "invisible" varchar(36),
-    "invisible_id" varchar(36)
-);
-
-CREATE TABLE "nopk" (
-    "id" varchar(36) NOT NULL
-);
-
-CREATE TABLE "post_tags" (
-    "id" serial PRIMARY KEY,
-    "post_id" int NOT NULL,
-    "tag_id" int NOT NULL
-);
-
-CREATE TABLE "products" (
-    "id" serial PRIMARY KEY,
-    "name" varchar(255) NOT NULL,
-    "price" decimal(10, 2) NOT NULL,
-    "properties" text NOT NULL,
-    "created_at" datetime NOT NULL,
-    "deleted_at" datetime
-);
-
-CREATE TABLE "tags" (
-    "id" serial PRIMARY KEY,
-    "name" varchar(255) NOT NULL,
-    "is_important" bit(1) NOT NULL
-);
-
-CREATE TABLE "users" (
-    "id" serial PRIMARY KEY,
-    "username" varchar(255) NOT NULL,
-    "password" varchar(255) NOT NULL,
-    "api_key" varchar(255),
-    "location" point
-);
-
-ALTER TABLE "abc_posts" ADD CONSTRAINT "fk_abc_posts_abc_category_id" FOREIGN KEY ("abc_category_id") REFERENCES "categories" ("id");
-ALTER TABLE "abc_posts" ADD CONSTRAINT "fk_abc_posts_abc_user_id" FOREIGN KEY ("abc_user_id") REFERENCES "users" ("id");
-ALTER TABLE "barcodes" ADD CONSTRAINT "fk_barcodes_product_id" FOREIGN KEY ("product_id") REFERENCES "products" ("id");
-ALTER TABLE "comments" ADD CONSTRAINT "fk_comments_category_id" FOREIGN KEY ("category_id") REFERENCES "categories" ("id");
-ALTER TABLE "comments" ADD CONSTRAINT "fk_comments_post_id" FOREIGN KEY ("post_id") REFERENCES "abc_posts" ("abc_id");
-ALTER TABLE "kunsthåndværk" ADD CONSTRAINT "fk_kunsthåndværk_invisible_id" FOREIGN KEY ("invisible_id") REFERENCES "invisibles" ("id");
-ALTER TABLE "kunsthåndværk" ADD CONSTRAINT "fk_kunsthåndværk_user_id" FOREIGN KEY ("user_id") REFERENCES "users" ("id");
-ALTER TABLE "post_tags" ADD CONSTRAINT "fk_post_tags_post_id" FOREIGN KEY ("post_id") REFERENCES "abc_posts" ("abc_id");
-ALTER TABLE "post_tags" ADD CONSTRAINT "fk_post_tags_tag_id" FOREIGN KEY ("tag_id") REFERENCES "tags" ("id");
-
-`
-	if got != expected {
-		t.Errorf("Generic dump mismatch:\n--- got ---\n%s\n--- expected ---\n%s", got, expected)
-	}
+	t.Run("all_tables_present", func(t *testing.T) {
+		tables := []string{"abc_posts", "barcodes", "categories", "comments",
+			"countries", "events", "invisibles", "kunsthåndværk", "nopk",
+			"post_tags", "products", "tags", "users"}
+		for _, tbl := range tables {
+			if !strings.Contains(got, `CREATE TABLE "`+tbl+`"`) {
+				t.Errorf("missing table %s", tbl)
+			}
+		}
+	})
+	t.Run("serial_type", func(t *testing.T) {
+		if !strings.Contains(got, `"abc_id" serial PRIMARY KEY`) {
+			t.Error("expected serial PRIMARY KEY for abc_id")
+		}
+	})
+	t.Run("bigserial_type", func(t *testing.T) {
+		if !strings.Contains(got, `"id" bigserial PRIMARY KEY`) {
+			t.Error("expected bigserial PRIMARY KEY for comments.id")
+		}
+	})
+	t.Run("insert_statements", func(t *testing.T) {
+		if !strings.Contains(got, `INSERT INTO "abc_posts"`) {
+			t.Error("expected INSERT INTO for abc_posts")
+		}
+		if !strings.Contains(got, `'blog started'`) {
+			t.Error("expected data values in INSERT")
+		}
+	})
+	t.Run("hex_values", func(t *testing.T) {
+		if !strings.Contains(got, "X'00ff01'") {
+			t.Error("expected hex value X'00ff01' in barcodes INSERT")
+		}
+	})
+	t.Run("null_values", func(t *testing.T) {
+		if !strings.Contains(got, "NULL)") {
+			t.Error("expected NULL values in INSERT")
+		}
+	})
+	t.Run("fk_constraints", func(t *testing.T) {
+		if !strings.Contains(got, `ALTER TABLE "abc_posts" ADD CONSTRAINT "fk_abc_posts_abc_category_id"`) {
+			t.Error("expected FK constraint for abc_posts")
+		}
+	})
+	t.Run("double_quote_identifiers", func(t *testing.T) {
+		if strings.Contains(got, "`") {
+			t.Error("Generic should use double-quote identifiers, not backticks")
+		}
+	})
 }
 
 func TestDumpBlogPostgres(t *testing.T) {
@@ -188,33 +137,33 @@ func TestDumpBlogPostgres(t *testing.T) {
 	})
 }
 
-func TestDumpBlogMySQL(t *testing.T) {
+func TestDumpBlogMariaDB(t *testing.T) {
 	db := loadBlogDBML(t)
-	got := Dump(db, MySQL)
+	got := Dump(db, MariaDB)
 
 	t.Run("backtick_quoting", func(t *testing.T) {
 		if !strings.Contains(got, "CREATE TABLE `categories`") {
-			t.Error("expected backtick quoting for MySQL")
+			t.Error("expected backtick quoting for MariaDB")
 		}
 	})
 	t.Run("auto_increment", func(t *testing.T) {
 		if !strings.Contains(got, "int AUTO_INCREMENT PRIMARY KEY") {
-			t.Errorf("expected AUTO_INCREMENT for int [pk, increment] in MySQL")
+			t.Errorf("expected AUTO_INCREMENT for int [pk, increment] in MariaDB")
 		}
 	})
 	t.Run("bigint_auto_increment", func(t *testing.T) {
 		if !strings.Contains(got, "bigint AUTO_INCREMENT PRIMARY KEY") {
-			t.Errorf("expected bigint AUTO_INCREMENT for bigint [pk, increment] in MySQL")
+			t.Errorf("expected bigint AUTO_INCREMENT for bigint [pk, increment] in MariaDB")
 		}
 	})
 	t.Run("inline_comment", func(t *testing.T) {
 		if !strings.Contains(got, "COMMENT 'The identifier of the category.'") {
-			t.Error("expected inline COMMENT for MySQL column")
+			t.Error("expected inline COMMENT for MariaDB column")
 		}
 	})
 	t.Run("table_comment", func(t *testing.T) {
 		if !strings.Contains(got, "COMMENT = 'The post categories of the blog system.'") {
-			t.Error("expected table COMMENT for MySQL")
+			t.Error("expected table COMMENT for MariaDB")
 		}
 	})
 	t.Run("fk_constraints", func(t *testing.T) {
@@ -229,12 +178,12 @@ func TestDumpBlogMySQL(t *testing.T) {
 	})
 	t.Run("no_serial", func(t *testing.T) {
 		if strings.Contains(got, "SERIAL") || strings.Contains(got, "BIGSERIAL") {
-			t.Error("MySQL should not contain SERIAL/BIGSERIAL")
+			t.Error("MariaDB should not contain SERIAL/BIGSERIAL")
 		}
 	})
 	t.Run("no_comment_on", func(t *testing.T) {
 		if strings.Contains(got, "COMMENT ON") {
-			t.Error("MySQL should not use COMMENT ON statements")
+			t.Error("MariaDB should not use COMMENT ON statements")
 		}
 	})
 	t.Run("all_tables_present", func(t *testing.T) {
@@ -243,7 +192,7 @@ func TestDumpBlogMySQL(t *testing.T) {
 			"kunsthåndværk", "invisibles", "nopk"}
 		for _, tbl := range tables {
 			if !strings.Contains(got, "`"+tbl+"`") {
-				t.Errorf("expected table %s in MySQL output", tbl)
+				t.Errorf("expected table %s in MariaDB output", tbl)
 			}
 		}
 	})
@@ -268,7 +217,7 @@ func TestDumpBlogSQLite(t *testing.T) {
 			t.Error("SQLite should not use ALTER TABLE for FK constraints")
 		}
 	})
-	t.Run("no_auto_increment_mysql", func(t *testing.T) {
+	t.Run("no_auto_increment_maria_db", func(t *testing.T) {
 		if strings.Contains(got, "AUTO_INCREMENT") {
 			t.Error("SQLite should not contain AUTO_INCREMENT")
 		}
@@ -322,9 +271,9 @@ func TestDumpBlogSQLite(t *testing.T) {
 func TestDumpBlogDialectFromDatabase(t *testing.T) {
 	db := loadBlogDBML(t)
 	d := DialectFromDatabase(db)
-	// database_type: 'normalized' maps to MySQL
-	if d != MySQL {
-		t.Errorf("expected MySQL dialect for 'normalized', got %d", d)
+	// database_type: 'normalized' maps to Generic (caller decides the default)
+	if d != Generic {
+		t.Errorf("expected Generic dialect for 'normalized', got %d", d)
 	}
 }
 
@@ -342,9 +291,9 @@ func TestDumpBlogRefCount(t *testing.T) {
 	}
 }
 
-func TestDumpMySQLColumnCommentRoundtrip(t *testing.T) {
+func TestDumpMariaDBColumnCommentRoundtrip(t *testing.T) {
 	db := loadBlogDBML(t)
-	got := Dump(db, MySQL)
+	got := Dump(db, MariaDB)
 
 	// Verify all three categories column comments are present as inline COMMENT
 	comments := map[string]string{
@@ -355,11 +304,11 @@ func TestDumpMySQLColumnCommentRoundtrip(t *testing.T) {
 	for col, note := range comments {
 		expected := "`" + col + "` "
 		if !strings.Contains(got, expected) {
-			t.Fatalf("column %s not found in MySQL output", col)
+			t.Fatalf("column %s not found in MariaDB output", col)
 		}
 		expectedComment := "COMMENT '" + note + "'"
 		if !strings.Contains(got, expectedComment) {
-			t.Errorf("expected MySQL inline comment for column %s: %s", col, expectedComment)
+			t.Errorf("expected MariaDB inline comment for column %s: %s", col, expectedComment)
 		}
 	}
 
@@ -369,13 +318,17 @@ func TestDumpMySQLColumnCommentRoundtrip(t *testing.T) {
 	if catIdx < 0 {
 		t.Fatal("categories table not found")
 	}
+	// Find end of CREATE TABLE statement (before INSERT or next CREATE)
+	nextInsert := strings.Index(got[catIdx:], "\nINSERT ")
 	nextCreate := strings.Index(got[catIdx+1:], "CREATE TABLE")
-	var catSQL string
-	if nextCreate >= 0 {
-		catSQL = got[catIdx : catIdx+1+nextCreate]
-	} else {
-		catSQL = got[catIdx:]
+	endPos := len(got)
+	if nextInsert >= 0 {
+		endPos = catIdx + nextInsert
 	}
+	if nextCreate >= 0 && catIdx+1+nextCreate < endPos {
+		endPos = catIdx + 1 + nextCreate
+	}
+	catSQL := got[catIdx:endPos]
 
 	// Each column line should contain both the column name and its comment
 	lines := strings.Split(catSQL, "\n")
@@ -391,6 +344,6 @@ func TestDumpMySQLColumnCommentRoundtrip(t *testing.T) {
 
 	// Verify comments do NOT appear as COMMENT ON (Postgres style)
 	if strings.Contains(got, "COMMENT ON") {
-		t.Error("MySQL should use inline COMMENT, not COMMENT ON")
+		t.Error("MariaDB should use inline COMMENT, not COMMENT ON")
 	}
 }

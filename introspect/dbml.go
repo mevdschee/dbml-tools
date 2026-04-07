@@ -106,11 +106,43 @@ func writeTable(sb *strings.Builder, t *Table, normalize bool) {
 		sb.WriteString("  }\n")
 	}
 
+	if t.Records != nil && len(t.Records.Rows) > 0 {
+		writeRecords(sb, t.Records)
+	}
+
 	if t.Comment != "" {
 		fmt.Fprintf(sb, "\n  Note: %q\n", t.Comment)
 	}
 
 	sb.WriteString("}\n")
+}
+
+func writeRecords(sb *strings.Builder, rec *Record) {
+	sb.WriteString("\n  records (")
+	for i, col := range rec.Columns {
+		if i > 0 {
+			sb.WriteString(", ")
+		}
+		fmt.Fprintf(sb, "%q", col)
+	}
+	sb.WriteString(") {\n")
+	for _, row := range rec.Rows {
+		sb.WriteString("    ")
+		for i, val := range row {
+			if i > 0 {
+				sb.WriteString(", ")
+			}
+			if val == "null" {
+				sb.WriteString("null")
+			} else if strings.HasPrefix(val, "X'") {
+				sb.WriteString(val)
+			} else {
+				sb.WriteString("'" + strings.ReplaceAll(val, "'", "\\'") + "'")
+			}
+		}
+		sb.WriteByte('\n')
+	}
+	sb.WriteString("  }\n")
 }
 
 // normalizedDBMLType returns the DBML canonical type name and whether the column

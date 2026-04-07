@@ -24,6 +24,12 @@ type Database struct {
 	Records       []interface{}  `json:"records"`
 }
 
+// TableRecords holds parsed records data for a table.
+type TableRecords struct {
+	Columns []string   `json:"columns"`
+	Rows    [][]string `json:"rows"`
+}
+
 type Table struct {
 	Name       string        `json:"name"`
 	SchemaName *string       `json:"schemaName"`
@@ -34,6 +40,7 @@ type Table struct {
 	Partials   []interface{} `json:"partials"`
 	Checks     []interface{} `json:"checks"`
 	Note       *Note         `json:"note,omitempty"`
+	Records    *TableRecords `json:"records,omitempty"`
 }
 
 type Column struct {
@@ -201,12 +208,29 @@ func (interp *Interpreter) interpretTable(db *Database, decl *parser.ElementDecl
 		return
 	}
 
+	var recordsCols []string
+	awaitRecordsBlock := false
 	for _, item := range block.Body {
-		// Capture table-level note: 'value' before treating item as a column.
+		// After seeing "records (...)", the next item is the BlockExpr with data rows.
+		if awaitRecordsBlock {
+			awaitRecordsBlock = false
+			if blk, ok := item.(*parser.BlockExprNode); ok {
+				tbl.Records = interpretRecords(recordsCols, blk)
+				continue
+			}
+			// No block found — not a records block after all, fall through.
+		}
 		if fa, ok := item.(*parser.FuncAppNode); ok {
-			if strings.ToLower(extractName(fa.Callee)) == "note" && len(fa.Args) > 0 {
+			callee := strings.ToLower(extractName(fa.Callee))
+			// Capture table-level note: 'value' before treating item as a column.
+			if callee == "note" && len(fa.Args) > 0 {
 				v := extractKeyValue(fa.Args)
 				tbl.Note = &Note{Value: v, Token: nodeRange(fa)}
+				continue
+			}
+			if callee == "records" {
+				recordsCols = extractRecordsCols(fa)
+				awaitRecordsBlock = true
 				continue
 			}
 		}
@@ -282,7 +306,7 @@ func (interp *Interpreter) interpretField(n parser.Node) *Column {
 // isColumnName reports whether s looks like a valid column name rather than a
 // DBML keyword or a stray punctuation token leaking out of an indexes block.
 func isColumnName(s string) bool {
-	if s == "" || s == "indexes" || s == "Note" || s == "note" {
+	if s == "" || s == "indexes" || s == "records" || s == "Note" || s == "note" {
 		return false
 	}
 	// Reject bare punctuation tokens produced when the parser walks into an
@@ -615,6 +639,82 @@ func extractStringValue(n parser.Node) string {
 		return node.Token.Value
 	}
 	return ""
+}
+
+// extractRecordsCols extracts column names from a records FuncApp, e.g.
+// records ("id", "name") → ["id", "name"].
+func extractRecordsCols(fa *parser.FuncAppNode) []string {
+	for _, arg := range fa.Args {
+		if tuple, ok := arg.(*parser.TupleExprNode); ok {
+			cols := make([]string, len(tuple.Items))
+			for i, item := range tuple.Items {
+				cols[i] = extractName(item)
+			}
+			return cols
+		}
+	}
+	return nil
+}
+
+// interpretRecords extracts row data from a records block.
+// The parser produces items like:
+//   - PrimaryExpr("1") — first value of a row
+//   - FuncApp(callee=",", args=["hello"]) — comma + next value
+//   - FuncApp(callee=",", args=["null"]) — comma + next value
+//
+// A new row starts with a PrimaryExpr; FuncApp(,) items append to the current row.
+// Single-column rows are just a PrimaryExpr with no following comma FuncApp.
+func interpretRecords(cols []string, blk *parser.BlockExprNode) *TableRecords {
+	rec := &TableRecords{Columns: cols}
+	var currentRow []string
+	for _, item := range blk.Body {
+		switch node := item.(type) {
+		case *parser.PrimaryExprNode:
+			// Start of a new row — flush previous row if any
+			if len(currentRow) > 0 {
+				rec.Rows = append(rec.Rows, currentRow)
+			}
+			currentRow = []string{recordValue(node)}
+		case *parser.FuncAppNode:
+			callee := extractName(node.Callee)
+			if callee == "," {
+				// Continuation of current row
+				for _, arg := range node.Args {
+					v := extractName(arg)
+					if v == "," {
+						continue
+					}
+					currentRow = append(currentRow, recordValue(arg))
+				}
+			} else {
+				// Non-comma FuncApp starts a new row
+				if len(currentRow) > 0 {
+					rec.Rows = append(rec.Rows, currentRow)
+				}
+				currentRow = []string{recordValue(node.Callee)}
+				for _, arg := range node.Args {
+					v := extractName(arg)
+					if v == "," {
+						continue
+					}
+					currentRow = append(currentRow, recordValue(arg))
+				}
+			}
+		}
+	}
+	if len(currentRow) > 0 {
+		rec.Rows = append(rec.Rows, currentRow)
+	}
+	return rec
+}
+
+// recordValue extracts a value string from a records row item.
+func recordValue(n parser.Node) string {
+	name := extractName(n)
+	if strings.ToLower(name) == "null" {
+		return "null"
+	}
+	return name
 }
 
 func extractAttrName(attr *parser.AttributeNode) string {

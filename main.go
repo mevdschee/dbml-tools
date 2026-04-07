@@ -21,7 +21,7 @@ func usage() {
 	fmt.Fprintf(os.Stderr, "  interpret  <file>              Interpret and output database schema JSON\n")
 	fmt.Fprintf(os.Stderr, "  check      <file>              Check for parse/semantic errors\n")
 	fmt.Fprintf(os.Stderr, "  todbml     [--normalize] <dsn> Connect to a database and output DBML\n")
-	fmt.Fprintf(os.Stderr, "  tosql      <file>              Generate CREATE TABLE SQL\n")
+	fmt.Fprintf(os.Stderr, "  tosql      [--dialect d] <file> Generate CREATE TABLE SQL\n")
 	fmt.Fprintf(os.Stderr, "  migrate    [--apply] <old> <new>  Generate migration SQL\n")
 	fmt.Fprintf(os.Stderr, "\nSQL dialect is determined by the database_type Project setting in DBML files.\n")
 	fmt.Fprintf(os.Stderr, "\nConnection string examples:\n")
@@ -90,9 +90,10 @@ func parseAndInterpret(source string) *interpreter.Database {
 
 func doToSQL(args []string) {
 	fs := flag.NewFlagSet("tosql", flag.ExitOnError)
+	dialectStr := fs.String("dialect", "", "SQL dialect: mariadb, postgres, sqlite (default: auto-detect from database_type)")
 	fs.Usage = func() {
-		fmt.Fprintf(os.Stderr, "Usage: dbml-tools tosql <file>\n")
-		fmt.Fprintf(os.Stderr, "       SQL dialect is determined by the database_type Project setting.\n")
+		fmt.Fprintf(os.Stderr, "Usage: dbml-tools tosql [--dialect mariadb|postgres|sqlite] <file>\n")
+		fmt.Fprintf(os.Stderr, "       SQL dialect is determined by --dialect flag or database_type Project setting.\n")
 		fs.PrintDefaults()
 	}
 	fs.Parse(args) //nolint:errcheck
@@ -103,19 +104,20 @@ func doToSQL(args []string) {
 	}
 
 	db := parseAndInterpret(readFile(fs.Arg(0)))
-	d := generator.DialectFromDatabase(db)
+	d := resolveDialectFlag(*dialectStr, generator.DialectFromDatabase(db))
 	fmt.Print(generator.Dump(db, d))
 }
 
 func doMigrate(args []string) {
 	fs := flag.NewFlagSet("migrate", flag.ExitOnError)
 	apply := fs.Bool("apply", false, "remove dry-run header (statements are ready to apply)")
+	dialectStr := fs.String("dialect", "", "SQL dialect: mariadb, postgres, sqlite (default: auto-detect)")
 	excludeStr := fs.String("exclude", "", "comma-separated table name patterns to exclude (supports * glob)")
 	includeStr := fs.String("include", "", "comma-separated table name patterns to include (all others excluded)")
 	fs.Usage = func() {
-		fmt.Fprintf(os.Stderr, "Usage: dbml-tools migrate [--apply] [--exclude pattern,...] <old> <new>\n")
+		fmt.Fprintf(os.Stderr, "Usage: dbml-tools migrate [--apply] [--dialect mariadb|postgres|sqlite] [--exclude pattern,...] <old> <new>\n")
 		fmt.Fprintf(os.Stderr, "       <old> and <new> may each be a .dbml file path or a connection string.\n")
-		fmt.Fprintf(os.Stderr, "       SQL dialect is auto-detected from DSN or database_type Project setting.\n")
+		fmt.Fprintf(os.Stderr, "       SQL dialect is determined by --dialect flag, DSN, or database_type Project setting.\n")
 		fs.PrintDefaults()
 	}
 	fs.Parse(args) //nolint:errcheck
@@ -142,8 +144,8 @@ func doMigrate(args []string) {
 		os.Exit(1)
 	}
 
-	// Resolve dialect: auto-detect from DSN > database_type from DBML > default generic.
-	d := resolveDialect(oldArg, newArg, oldDB, newDB)
+	// Resolve dialect: --dialect flag > DSN auto-detect > database_type from DBML > default mysql.
+	d := resolveDialectFlag(*dialectStr, resolveDialect(oldArg, newArg, oldDB, newDB))
 
 	fmt.Print(generator.Migrate(oldDB, newDB, d, !*apply))
 }
@@ -164,6 +166,24 @@ func loadSchema(arg string, opts introspect.Options) (*interpreter.Database, err
 	return parseAndInterpret(string(src)), nil
 }
 
+// resolveDialectFlag applies the --dialect flag override. If the flag is set, it takes
+// precedence. Otherwise falls back to the auto-detected dialect, defaulting to MariaDB
+// when the result is Generic (i.e. normalized or unset database_type).
+func resolveDialectFlag(flagVal string, autoDetected generator.Dialect) generator.Dialect {
+	if flagVal != "" {
+		d, err := generator.ParseDialect(flagVal)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "error: %v\n", err)
+			os.Exit(1)
+		}
+		return d
+	}
+	if autoDetected == generator.Generic {
+		return generator.MariaDB
+	}
+	return autoDetected
+}
+
 // resolveDialect determines the dialect from DSN auto-detect or database_type Project setting.
 func resolveDialect(arg1, arg2 string, db1, db2 *interpreter.Database) generator.Dialect {
 	// Auto-detect from first DSN found.
@@ -173,7 +193,7 @@ func resolveDialect(arg1, arg2 string, db1, db2 *interpreter.Database) generator
 			case introspect.EnginePostgres:
 				return generator.Postgres
 			case introspect.EngineMariaDB:
-				return generator.MySQL
+				return generator.MariaDB
 			case introspect.EngineSQLite:
 				return generator.SQLite
 			}

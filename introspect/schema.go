@@ -50,6 +50,12 @@ type CheckConstraint struct {
 	Expression string
 }
 
+// Record holds the column names and row values for a table's data.
+type Record struct {
+	Columns []string
+	Rows    [][]string // each inner slice is one row of string-encoded values
+}
+
 // Table represents a database table.
 type Table struct {
 	Schema           string // empty for MariaDB/SQLite
@@ -59,6 +65,7 @@ type Table struct {
 	Indexes          []*Index
 	Constraints      []*Constraint
 	CheckConstraints []*CheckConstraint
+	Records          *Record // populated when --data is used
 }
 
 // Enum represents a named enum type (PostgreSQL) or an inline enum column (MariaDB).
