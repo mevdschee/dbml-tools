@@ -22,6 +22,7 @@ func usage() {
 	fmt.Fprintf(os.Stderr, "  check      <file>              Check for parse/semantic errors\n")
 	fmt.Fprintf(os.Stderr, "  todbml     [--normalize] <dsn> Connect to a database and output DBML\n")
 	fmt.Fprintf(os.Stderr, "  tosql      <file>              Generate CREATE TABLE SQL\n")
+	fmt.Fprintf(os.Stderr, "  todot      <file>              Generate Graphviz DOT diagram\n")
 	fmt.Fprintf(os.Stderr, "  migrate    [--apply] <old> <new>  Generate migration SQL\n")
 	fmt.Fprintf(os.Stderr, "\nSQL dialect is determined by the database_type Project setting in DBML files.\n")
 	fmt.Fprintf(os.Stderr, "\nConnection string examples:\n")
@@ -42,6 +43,8 @@ func main() {
 		doToDBML(os.Args[2:])
 	case "tosql":
 		doToSQL(os.Args[2:])
+	case "todot":
+		doToDot(os.Args[2:])
 	case "migrate":
 		doMigrate(os.Args[2:])
 	case "check":
@@ -86,6 +89,23 @@ func parseAndInterpret(source string) *interpreter.Database {
 	prog := p.Parse()
 	interp := interpreter.New()
 	return interp.Interpret(prog)
+}
+
+func doToDot(args []string) {
+	fs := flag.NewFlagSet("todot", flag.ExitOnError)
+	fs.Usage = func() {
+		fmt.Fprintf(os.Stderr, "Usage: dbml-tools todot <file>\n")
+		fs.PrintDefaults()
+	}
+	fs.Parse(args) //nolint:errcheck
+
+	if fs.NArg() < 1 {
+		fs.Usage()
+		os.Exit(1)
+	}
+
+	db := parseAndInterpret(readFile(fs.Arg(0)))
+	fmt.Print(generator.Dot(db))
 }
 
 func doToSQL(args []string) {

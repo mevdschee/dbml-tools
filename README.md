@@ -3,7 +3,13 @@
 A CLI toolset for working with [DBML](https://dbml.dbdiagram.io) (Database
 Markup Language) files and live databases.
 
-Goals:
+Functionality
+
+- Convert DSN to DBML
+- Convert DBML to SQL
+- SQL migration from DBML/DSN
+
+Future goals:
 
 - A database visualiser (via open source dot files)
 - A database documentation builder (with an open source hugo output)
