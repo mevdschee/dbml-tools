@@ -32,16 +32,16 @@ Commands:
   parse      <file>                                    Parse a DBML file and output AST JSON
   interpret  <file>                                    Interpret a DBML file and output database schema JSON
   check      <file>                                    Check a DBML file for errors
-  import [--normalize] [--exclude p,...] [--include p,...] <dsn>
+  todbml [--normalize] [--exclude p,...] [--include p,...] <dsn>
                                                        Connect to a database and print its schema as DBML
-  export       <file>                                    Generate CREATE TABLE SQL from a DBML file
+  tosql        <file>                                    Generate CREATE TABLE SQL from a DBML file
   migrate    [--apply] [--exclude p,...] [--include p,...] <old> <new>
                                                        Generate migration SQL from schema diff
 ```
 
 ### How the SQL dialect is determined
 
-The SQL dialect used by `export` and `migrate` is determined automatically from
+The SQL dialect used by `tosql` and `migrate` is determined automatically from
 the `database_type` Project setting inside the DBML file:
 
 ```dbml
@@ -50,7 +50,7 @@ Project {
 }
 ```
 
-`import` writes this setting automatically based on the database engine it
+`todbml` writes this setting automatically based on the database engine it
 connects to. When `database_type` is absent or set to `'normalized'`, a generic
 dialect is used.
 
@@ -58,20 +58,20 @@ dialect is used.
 
 DBML column types flow through the toolchain in one of two modes:
 
-**Native** (default for `import`)\
+**Native** (default for `todbml`)\
 Column types are preserved exactly as they appear in the source database
 (e.g. `character varying(255)`, `bytea`, `mediumtext`). The `database_type`
 Project setting records which engine they came from, so downstream tools
-(`export`, `migrate`) emit the correct SQL syntax.
+(`tosql`, `migrate`) emit the correct SQL syntax.
 
-**Normalized** (`import --normalize`)\
+**Normalized** (`todbml --normalize`)\
 Type names are mapped to canonical DBML equivalents (e.g. `integer` → `int`,
 `character varying(255)` → `varchar(255)`, `bytea` → `binary`). The
 `database_type` is set to `'normalized'`. Unrecognised or vendor-specific types
 (e.g. `public.geometry`) are copied verbatim. This mode produces
 database-agnostic DBML.
 
-### import
+### todbml
 
 Connects to a live database, reads its schema, and outputs DBML to stdout.
 By default column types are preserved as-is from the database and a
@@ -84,27 +84,27 @@ Pass `--normalize` to map types to database-agnostic canonical DBML equivalents
 
 ```sh
 # MariaDB / MySQL (native types)
-dbml-tools import mariadb://user:pass@host:3306/mydb
+dbml-tools todbml mariadb://user:pass@host:3306/mydb
 
 # PostgreSQL (defaults to schema "public"; override with ?schema=)
-dbml-tools import postgres://user:pass@host:5432/mydb
-dbml-tools import postgres://user:pass@host:5432/mydb?schema=myschema
+dbml-tools todbml postgres://user:pass@host:5432/mydb
+dbml-tools todbml postgres://user:pass@host:5432/mydb?schema=myschema
 
 # SQLite
-dbml-tools import sqlite:///path/to/file.db
+dbml-tools todbml sqlite:///path/to/file.db
 
 # Normalized / database-agnostic output
-dbml-tools import --normalize postgres://user:pass@host:5432/mydb
+dbml-tools todbml --normalize postgres://user:pass@host:5432/mydb
 
 # Save to a file
-dbml-tools import sqlite:///path/to/file.db > schema.dbml
+dbml-tools todbml sqlite:///path/to/file.db > schema.dbml
 
 # Exclude specific tables (exact name or glob pattern, comma-separated)
-dbml-tools import --exclude 'spatial_ref_sys,geography_columns' postgres://...
-dbml-tools import --exclude 'tmp_*,_*' mariadb://...
+dbml-tools todbml --exclude 'spatial_ref_sys,geography_columns' postgres://...
+dbml-tools todbml --exclude 'tmp_*,_*' mariadb://...
 
 # Include only specific tables
-dbml-tools import --include 'orders,order_*' postgres://...
+dbml-tools todbml --include 'orders,order_*' postgres://...
 ```
 
 > **Note:** flags must be placed before the DSN argument.
@@ -123,14 +123,14 @@ Checks a DBML file for syntax and semantic errors.
 dbml-tools check schema.dbml
 ```
 
-### export
+### tosql
 
 Generates a `CREATE TABLE` SQL script from a DBML file. The SQL dialect is
 determined by the `database_type` Project setting in the file.
 
 ```sh
 # Dialect determined by database_type in the file (e.g. 'PostgreSQL')
-dbml-tools export schema.dbml
+dbml-tools tosql schema.dbml
 ```
 
 ### migrate
@@ -161,7 +161,7 @@ By default `migrate` is a **dry run**: it prints a `-- DRY RUN` header and the
 SQL statements, but executes nothing. Pass `--apply` to suppress the header so
 the output can be piped directly into a database client.
 
-The `--exclude` / `--include` filter flags work the same as for `import` and
+The `--exclude` / `--include` filter flags work the same as for `todbml` and
 apply to both schema sides.
 
 **What is introspected:**

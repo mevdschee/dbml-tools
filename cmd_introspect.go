@@ -13,13 +13,13 @@ import (
 //go:embed sql
 var sqlFiles embed.FS
 
-func doImport(args []string) {
-	fs := flag.NewFlagSet("import", flag.ExitOnError)
+func doToDBML(args []string) {
+	fs := flag.NewFlagSet("todbml", flag.ExitOnError)
 	normalize := fs.Bool("normalize", false, "normalize column types to database-agnostic DBML equivalents")
 	excludeStr := fs.String("exclude", "", "comma-separated table name patterns to exclude (supports * glob)")
 	includeStr := fs.String("include", "", "comma-separated table name patterns to include (all others excluded)")
 	fs.Usage = func() {
-		fmt.Fprintf(os.Stderr, "Usage: dbml-tools import [--normalize] [--exclude pattern,...] [--include pattern,...] <dsn>\n")
+		fmt.Fprintf(os.Stderr, "Usage: dbml-tools todbml [--normalize] [--exclude pattern,...] [--include pattern,...] <dsn>\n")
 		fs.PrintDefaults()
 	}
 	fs.Parse(args) //nolint:errcheck
