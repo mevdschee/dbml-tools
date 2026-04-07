@@ -3,17 +3,17 @@ Project {
 }
 
 Table "spatial_ref_sys" {
-  "srid" int [pk, not null]
+  "srid" integer [pk, not null]
   "auth_name" varchar(256)
-  "auth_srid" int
+  "auth_srid" integer
   "srtext" varchar(2048)
   "proj4text" varchar(2048)
 }
 
 Table "post_tags" {
-  "id" serial [pk]
-  "post_id" int [not null]
-  "tag_id" int [not null]
+  "id" integer [pk, increment, not null]
+  "post_id" integer [not null]
+  "tag_id" integer [not null]
 
   indexes {
     ("post_id", "tag_id") [unique, name: "post_tags_post_id_tag_id_key"]
@@ -23,9 +23,9 @@ Table "post_tags" {
 }
 
 Table "abc_posts" {
-  "abc_id" serial [pk]
-  "abc_user_id" int [not null]
-  "abc_category_id" int [not null]
+  "abc_id" integer [pk, increment, not null]
+  "abc_user_id" integer [not null]
+  "abc_category_id" integer [not null]
   "abc_content" varchar(255) [not null]
 
   indexes {
@@ -35,13 +35,13 @@ Table "abc_posts" {
 }
 
 Table "tags" {
-  "id" serial [pk]
+  "id" integer [pk, increment, not null]
   "name" varchar(255) [not null]
-  "is_important" bool [not null]
+  "is_important" boolean [not null]
 }
 
 Table "users" {
-  "id" serial [pk]
+  "id" integer [pk, increment, not null]
   "username" varchar(255) [not null]
   "password" varchar(255) [not null]
   "api_key" varchar(255)
@@ -49,32 +49,32 @@ Table "users" {
 }
 
 Table "countries" {
-  "id" serial [pk]
+  "id" integer [pk, increment, not null]
   "name" varchar(255) [not null]
   "shape" public.geometry [not null]
 }
 
 Table "events" {
-  "id" serial [pk]
+  "id" integer [pk, increment, not null]
   "name" varchar(255) [not null]
   "datetime" timestamp
   "visitors" bigint
 }
 
 Table "products" {
-  "id" serial [pk]
+  "id" integer [pk, increment, not null]
   "name" varchar(255) [not null]
-  "price" decimal(10,2) [not null]
+  "price" numeric(10,2) [not null]
   "properties" json [not null]
   "created_at" timestamp [not null]
   "deleted_at" timestamp
 }
 
 Table "barcodes" {
-  "id" serial [pk]
-  "product_id" int [not null]
+  "id" integer [pk, increment, not null]
+  "product_id" integer [not null]
   "hex" varchar(255) [not null]
-  "bin" binary [not null]
+  "bin" bytea [not null]
   "ip_address" varchar(15)
 
   indexes {
@@ -84,8 +84,8 @@ Table "barcodes" {
 
 Table "kunsthåndværk" {
   "id" varchar(36) [pk, not null]
-  "Umlauts ä_ö_ü-COUNT" int [unique, not null]
-  "user_id" int [not null]
+  "Umlauts ä_ö_ü-COUNT" integer [unique, not null]
+  "user_id" integer [not null]
   "invisible" varchar(36)
   "invisible_id" varchar(36)
 

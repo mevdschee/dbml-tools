@@ -24,7 +24,7 @@ const (
 func ParseDialect(s string) (Dialect, error) {
 	switch strings.ToLower(s) {
 	case "", "generic", "normalized":
-		return Generic, nil
+		return MySQL, nil
 	case "postgres", "postgresql", "pg":
 		return Postgres, nil
 	case "mysql", "mariadb":
@@ -131,12 +131,18 @@ func mapType(typeName string, args []string, d Dialect, db *interpreter.Database
 				return quoteIdent(e.Name, Postgres), false
 			}
 		}
-		// Detect serial semantics so renderColumn can suppress redundant NOT NULL / increment.
+		// Expand serial semantics per dialect.
 		switch strings.ToLower(typeName) {
 		case "serial":
-			return typeName, true
+			if d == Postgres {
+				return "SERIAL", true
+			}
+			return "int", true // MySQL/SQLite: bare int; AUTO_INCREMENT added by renderColumn
 		case "bigserial":
-			return typeName, true
+			if d == Postgres {
+				return "BIGSERIAL", true
+			}
+			return "bigint", true // MySQL/SQLite: bare bigint
 		}
 		return typeName + argStr, false
 	}
@@ -250,8 +256,8 @@ func renderColumn(col interpreter.Column, inlinePK bool, d Dialect, db *interpre
 		isSerialType = true
 	}
 
-	// For MySQL with [increment]: append AUTO_INCREMENT keyword.
-	if d == MySQL && !isSerialType && isAutoInc {
+	// For MySQL with serial type or [increment]: append AUTO_INCREMENT keyword.
+	if d == MySQL && isAutoInc {
 		sqlType += " AUTO_INCREMENT"
 	}
 	// Generic and SQLite: no auto-increment keyword; the type string is emitted as-is.

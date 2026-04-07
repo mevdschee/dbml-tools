@@ -20,8 +20,8 @@ func usage() {
 	fmt.Fprintf(os.Stderr, "  parse      <file>              Parse and output AST JSON\n")
 	fmt.Fprintf(os.Stderr, "  interpret  <file>              Interpret and output database schema JSON\n")
 	fmt.Fprintf(os.Stderr, "  check      <file>              Check for parse/semantic errors\n")
-	fmt.Fprintf(os.Stderr, "  introspect [--normalize] <dsn> Connect to a database and output DBML\n")
-	fmt.Fprintf(os.Stderr, "  dump       <file>              Generate CREATE TABLE SQL\n")
+	fmt.Fprintf(os.Stderr, "  import     [--normalize] <dsn> Connect to a database and output DBML\n")
+	fmt.Fprintf(os.Stderr, "  export     <file>              Generate CREATE TABLE SQL\n")
 	fmt.Fprintf(os.Stderr, "  migrate    [--apply] <old> <new>  Generate migration SQL\n")
 	fmt.Fprintf(os.Stderr, "\nSQL dialect is determined by the database_type Project setting in DBML files.\n")
 	fmt.Fprintf(os.Stderr, "\nConnection string examples:\n")
@@ -38,10 +38,10 @@ func main() {
 	cmd := os.Args[1]
 
 	switch cmd {
-	case "introspect":
-		doIntrospect(os.Args[2:])
-	case "dump":
-		doDump(os.Args[2:])
+	case "import":
+		doImport(os.Args[2:])
+	case "export":
+		doExport(os.Args[2:])
 	case "migrate":
 		doMigrate(os.Args[2:])
 	case "check":
@@ -88,10 +88,10 @@ func parseAndInterpret(source string) *interpreter.Database {
 	return interp.Interpret(prog)
 }
 
-func doDump(args []string) {
-	fs := flag.NewFlagSet("dump", flag.ExitOnError)
+func doExport(args []string) {
+	fs := flag.NewFlagSet("export", flag.ExitOnError)
 	fs.Usage = func() {
-		fmt.Fprintf(os.Stderr, "Usage: dbml-tools dump <file>\n")
+		fmt.Fprintf(os.Stderr, "Usage: dbml-tools export <file>\n")
 		fmt.Fprintf(os.Stderr, "       SQL dialect is determined by the database_type Project setting.\n")
 		fs.PrintDefaults()
 	}

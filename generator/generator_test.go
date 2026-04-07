@@ -30,74 +30,49 @@ func loadBlogDBML(t *testing.T) *interpreter.Database {
 func TestDumpBlogGeneric(t *testing.T) {
 	db := loadBlogDBML(t)
 	got := Dump(db, Generic)
-	expected := `CREATE TABLE "categories" (
-    "id" int PRIMARY KEY,
-    "name" varchar(255) NOT NULL,
-    "icon" binary
-);
-
-CREATE TABLE "users" (
-    "id" int PRIMARY KEY,
-    "username" varchar(255) NOT NULL,
-    "password" varchar(255) NOT NULL,
-    "api_key" varchar(255),
-    "location" geometry
-);
-
-CREATE TABLE "abc_posts" (
-    "abc_id" int PRIMARY KEY,
+	expected := `CREATE TABLE "abc_posts" (
+    "abc_id" serial PRIMARY KEY,
     "abc_user_id" int NOT NULL,
     "abc_category_id" int NOT NULL,
     "abc_content" varchar(255) NOT NULL
 );
 
+CREATE TABLE "barcodes" (
+    "id" serial PRIMARY KEY,
+    "product_id" int NOT NULL,
+    "hex" varchar(255) NOT NULL,
+    "bin" binary NOT NULL,
+    "ip_address" varchar(15)
+);
+
+CREATE TABLE "categories" (
+    "id" serial PRIMARY KEY,
+    "name" varchar(255) NOT NULL,
+    "icon" binary
+);
+
 CREATE TABLE "comments" (
-    "id" bigint PRIMARY KEY,
+    "id" bigserial PRIMARY KEY,
     "post_id" int NOT NULL,
     "message" varchar(255) NOT NULL,
     "category_id" int NOT NULL
 );
 
-CREATE TABLE "tags" (
-    "id" int PRIMARY KEY,
-    "name" varchar(255) NOT NULL,
-    "is_important" bool NOT NULL
-);
-
-CREATE TABLE "post_tags" (
-    "id" int PRIMARY KEY,
-    "post_id" int NOT NULL,
-    "tag_id" int NOT NULL
-);
-
 CREATE TABLE "countries" (
-    "id" int PRIMARY KEY,
+    "id" serial PRIMARY KEY,
     "name" varchar(255) NOT NULL,
     "shape" geometry NOT NULL
 );
 
 CREATE TABLE "events" (
-    "id" int PRIMARY KEY,
+    "id" serial PRIMARY KEY,
     "name" varchar(255) NOT NULL,
-    "datetime" timestamp,
+    "datetime" datetime,
     "visitors" bigint
 );
 
-CREATE TABLE "products" (
-    "id" int PRIMARY KEY,
-    "name" varchar(255) NOT NULL,
-    "price" decimal(10, 2) NOT NULL,
-    "properties" json NOT NULL,
-    "created_at" timestamp NOT NULL,
-    "deleted_at" timestamp
-);
-
-CREATE TABLE "barcodes" (
-    "id" int PRIMARY KEY,
-    "product_id" int NOT NULL,
-    "hex" varchar(255) NOT NULL,
-    "bin" binary NOT NULL,
-    "ip_address" varchar(15)
+CREATE TABLE "invisibles" (
+    "id" varchar(36) PRIMARY KEY
 );
 
 CREATE TABLE "kunsthåndværk" (
@@ -108,23 +83,48 @@ CREATE TABLE "kunsthåndværk" (
     "invisible_id" varchar(36)
 );
 
-CREATE TABLE "invisibles" (
-    "id" varchar(36) PRIMARY KEY
-);
-
 CREATE TABLE "nopk" (
     "id" varchar(36) NOT NULL
 );
 
-ALTER TABLE "abc_posts" ADD CONSTRAINT "fk_abc_posts_abc_user_id" FOREIGN KEY ("abc_user_id") REFERENCES "users" ("id");
+CREATE TABLE "post_tags" (
+    "id" serial PRIMARY KEY,
+    "post_id" int NOT NULL,
+    "tag_id" int NOT NULL
+);
+
+CREATE TABLE "products" (
+    "id" serial PRIMARY KEY,
+    "name" varchar(255) NOT NULL,
+    "price" decimal(10, 2) NOT NULL,
+    "properties" text NOT NULL,
+    "created_at" datetime NOT NULL,
+    "deleted_at" datetime
+);
+
+CREATE TABLE "tags" (
+    "id" serial PRIMARY KEY,
+    "name" varchar(255) NOT NULL,
+    "is_important" bit(1) NOT NULL
+);
+
+CREATE TABLE "users" (
+    "id" serial PRIMARY KEY,
+    "username" varchar(255) NOT NULL,
+    "password" varchar(255) NOT NULL,
+    "api_key" varchar(255),
+    "location" point
+);
+
 ALTER TABLE "abc_posts" ADD CONSTRAINT "fk_abc_posts_abc_category_id" FOREIGN KEY ("abc_category_id") REFERENCES "categories" ("id");
-ALTER TABLE "comments" ADD CONSTRAINT "fk_comments_post_id" FOREIGN KEY ("post_id") REFERENCES "abc_posts" ("abc_id");
+ALTER TABLE "abc_posts" ADD CONSTRAINT "fk_abc_posts_abc_user_id" FOREIGN KEY ("abc_user_id") REFERENCES "users" ("id");
+ALTER TABLE "barcodes" ADD CONSTRAINT "fk_barcodes_product_id" FOREIGN KEY ("product_id") REFERENCES "products" ("id");
 ALTER TABLE "comments" ADD CONSTRAINT "fk_comments_category_id" FOREIGN KEY ("category_id") REFERENCES "categories" ("id");
+ALTER TABLE "comments" ADD CONSTRAINT "fk_comments_post_id" FOREIGN KEY ("post_id") REFERENCES "abc_posts" ("abc_id");
+ALTER TABLE "kunsthåndværk" ADD CONSTRAINT "fk_kunsthåndværk_invisible_id" FOREIGN KEY ("invisible_id") REFERENCES "invisibles" ("id");
+ALTER TABLE "kunsthåndværk" ADD CONSTRAINT "fk_kunsthåndværk_user_id" FOREIGN KEY ("user_id") REFERENCES "users" ("id");
 ALTER TABLE "post_tags" ADD CONSTRAINT "fk_post_tags_post_id" FOREIGN KEY ("post_id") REFERENCES "abc_posts" ("abc_id");
 ALTER TABLE "post_tags" ADD CONSTRAINT "fk_post_tags_tag_id" FOREIGN KEY ("tag_id") REFERENCES "tags" ("id");
-ALTER TABLE "barcodes" ADD CONSTRAINT "fk_barcodes_product_id" FOREIGN KEY ("product_id") REFERENCES "products" ("id");
-ALTER TABLE "kunsthåndværk" ADD CONSTRAINT "fk_kunsthåndværk_user_id" FOREIGN KEY ("user_id") REFERENCES "users" ("id");
-ALTER TABLE "kunsthåndværk" ADD CONSTRAINT "fk_kunsthåndværk_invisible_id" FOREIGN KEY ("invisible_id") REFERENCES "invisibles" ("id");
 
 `
 	if got != expected {
@@ -322,9 +322,9 @@ func TestDumpBlogSQLite(t *testing.T) {
 func TestDumpBlogDialectFromDatabase(t *testing.T) {
 	db := loadBlogDBML(t)
 	d := DialectFromDatabase(db)
-	// database_type: 'normalized' maps to Generic
-	if d != Generic {
-		t.Errorf("expected Generic dialect for 'normalized', got %d", d)
+	// database_type: 'normalized' maps to MySQL
+	if d != MySQL {
+		t.Errorf("expected MySQL dialect for 'normalized', got %d", d)
 	}
 }
 
