@@ -19,11 +19,11 @@ func usage() {
 	fmt.Fprintf(os.Stderr, "  lex        <file>              Tokenize and output lexer JSON\n")
 	fmt.Fprintf(os.Stderr, "  parse      <file>              Parse and output AST JSON\n")
 	fmt.Fprintf(os.Stderr, "  interpret  <file>              Interpret and output database schema JSON\n")
-	fmt.Fprintf(os.Stderr, "  check      <file>              Check for parse errors\n")
-	fmt.Fprintf(os.Stderr, "  introspect <dsn>               Connect to a database and output DBML\n")
-	fmt.Fprintf(os.Stderr, "  dump       [--dialect] <file>  Generate full CREATE TABLE SQL\n")
-	fmt.Fprintf(os.Stderr, "  migrate    [--dialect] [--apply] <old> <new>  Generate migration SQL\n")
-	fmt.Fprintf(os.Stderr, "\nDialects: postgres (default), mysql, sqlite\n")
+	fmt.Fprintf(os.Stderr, "  check      [-d driver] <file>           Check for parse/semantic errors\n")
+	fmt.Fprintf(os.Stderr, "  introspect <dsn>                        Connect to a database and output DBML\n")
+	fmt.Fprintf(os.Stderr, "  dump       [-d driver] <file>           Generate CREATE TABLE SQL\n")
+	fmt.Fprintf(os.Stderr, "  migrate    [-d driver] [--apply] <old> <new>  Generate migration SQL\n")
+	fmt.Fprintf(os.Stderr, "\nDrivers: postgres, mysql, sqlite (omit for generic/normalized mode)\n")
 	fmt.Fprintf(os.Stderr, "\nConnection string examples:\n")
 	fmt.Fprintf(os.Stderr, "  mariadb://user:pass@host:3306/mydb\n")
 	fmt.Fprintf(os.Stderr, "  postgres://user:pass@host:5432/mydb[?schema=public]\n")
@@ -44,6 +44,8 @@ func main() {
 		doDump(os.Args[2:])
 	case "migrate":
 		doMigrate(os.Args[2:])
+	case "check":
+		doCheck(os.Args[2:])
 	default:
 		if len(os.Args) < 3 {
 			usage()
@@ -62,8 +64,6 @@ func main() {
 			doParse(source)
 		case "interpret":
 			doInterpret(source)
-		case "check":
-			doCheck(file, source)
 		default:
 			usage()
 		}
@@ -90,9 +90,11 @@ func parseAndInterpret(source string) *interpreter.Database {
 
 func doDump(args []string) {
 	fs := flag.NewFlagSet("dump", flag.ExitOnError)
-	dialectStr := fs.String("dialect", "postgres", "SQL dialect: postgres, mysql, sqlite")
+	dialectStr := fs.String("dialect", "", "SQL dialect: postgres, mysql, sqlite (omit for generic passthrough)")
+	fs.StringVar(dialectStr, "d", "", "SQL dialect shorthand (same as --dialect)")
 	fs.Usage = func() {
-		fmt.Fprintf(os.Stderr, "Usage: dbml-tools dump [--dialect postgres|mysql|sqlite] <file>\n")
+		fmt.Fprintf(os.Stderr, "Usage: dbml-tools dump [-d postgres|mysql|sqlite] <file>\n")
+		fmt.Fprintf(os.Stderr, "       Without -d, types are emitted as-is (generic/passthrough mode).\n")
 		fs.PrintDefaults()
 	}
 	fs.Parse(args) //nolint:errcheck
@@ -115,11 +117,12 @@ func doDump(args []string) {
 func doMigrate(args []string) {
 	fs := flag.NewFlagSet("migrate", flag.ExitOnError)
 	dialectStr := fs.String("dialect", "", "SQL dialect: postgres, mysql, sqlite (auto-detected from DSN if omitted)")
+	fs.StringVar(dialectStr, "d", "", "SQL dialect shorthand (same as --dialect)")
 	apply := fs.Bool("apply", false, "remove dry-run header (statements are ready to apply)")
 	excludeStr := fs.String("exclude", "", "comma-separated table name patterns to exclude (supports * glob)")
 	includeStr := fs.String("include", "", "comma-separated table name patterns to include (all others excluded)")
 	fs.Usage = func() {
-		fmt.Fprintf(os.Stderr, "Usage: dbml-tools migrate [--dialect postgres|mysql|sqlite] [--apply] [--exclude pattern,...] <old> <new>\n")
+		fmt.Fprintf(os.Stderr, "Usage: dbml-tools migrate [-d postgres|mysql|sqlite] [--apply] [--exclude pattern,...] <old> <new>\n")
 		fmt.Fprintf(os.Stderr, "       <old> and <new> may each be a .dbml file path or a connection string.\n")
 		fs.PrintDefaults()
 	}
@@ -219,7 +222,37 @@ func doInterpret(source string) {
 	writeJSON(db)
 }
 
-func doCheck(file, source string) {
+func doCheck(args []string) {
+	fs := flag.NewFlagSet("check", flag.ExitOnError)
+	dialectStr := fs.String("d", "", "database driver for type validation: postgres, mysql, sqlite (omit to accept any type)")
+	fs.Usage = func() {
+		fmt.Fprintf(os.Stderr, "Usage: dbml-tools check [-d postgres|mysql|sqlite] <file>\n")
+		fmt.Fprintf(os.Stderr, "       Without -d, column types are accepted as-is without validation.\n")
+		fs.PrintDefaults()
+	}
+	fs.Parse(args) //nolint:errcheck
+
+	if fs.NArg() < 1 {
+		fs.Usage()
+		os.Exit(1)
+	}
+
+	// Validate -d value when given.
+	if *dialectStr != "" {
+		if _, err := generator.ParseDialect(*dialectStr); err != nil {
+			fmt.Fprintf(os.Stderr, "error: %v\n", err)
+			os.Exit(1)
+		}
+	}
+
+	file := fs.Arg(0)
+	src, err := os.ReadFile(file)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		os.Exit(1)
+	}
+	source := string(src)
+
 	l := lexer.New(source)
 	tokens := l.Lex()
 	p := parser.New(tokens, source)

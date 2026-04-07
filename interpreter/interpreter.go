@@ -4,6 +4,7 @@ import (
 	"dbml-tools/lexer"
 	"dbml-tools/parser"
 	"fmt"
+	"strings"
 )
 
 // ---------------------------------------------------------------------------
@@ -201,6 +202,14 @@ func (interp *Interpreter) interpretTable(db *Database, decl *parser.ElementDecl
 	}
 
 	for _, item := range block.Body {
+		// Capture table-level note: 'value' before treating item as a column.
+		if fa, ok := item.(*parser.FuncAppNode); ok {
+			if strings.ToLower(extractName(fa.Callee)) == "note" && len(fa.Args) > 0 {
+				v := extractStringValue(fa.Args[0])
+				tbl.Note = &Note{Value: v, Token: nodeRange(fa)}
+				continue
+			}
+		}
 		col := interp.interpretField(item)
 		if col != nil {
 			tbl.Fields = append(tbl.Fields, *col)
@@ -503,9 +512,15 @@ func (interp *Interpreter) interpretProject(db *Database, decl *parser.ElementDe
 	if ok {
 		for _, item := range block.Body {
 			if fa, ok := item.(*parser.FuncAppNode); ok {
-				key := extractName(fa.Callee)
+				key := strings.ToLower(extractName(fa.Callee))
 				if len(fa.Args) > 0 {
-					proj[key] = extractStringValue(fa.Args[0])
+					val := extractStringValue(fa.Args[0])
+					switch key {
+					case "database_type":
+						proj["databaseType"] = val
+					case "note":
+						proj["note"] = val
+					}
 				}
 			}
 		}

@@ -11,14 +11,19 @@ import (
 type Dialect int
 
 const (
-	Postgres Dialect = iota
+	// Generic is a passthrough dialect: types are emitted as-is without normalization or validation.
+	Generic Dialect = iota
+	Postgres
 	MySQL
 	SQLite
 )
 
 // ParseDialect parses a dialect name into a Dialect constant.
+// An empty string or "normalized" returns Generic (passthrough mode).
 func ParseDialect(s string) (Dialect, error) {
 	switch strings.ToLower(s) {
+	case "", "generic", "normalized":
+		return Generic, nil
 	case "postgres", "postgresql", "pg":
 		return Postgres, nil
 	case "mysql", "mariadb":
@@ -26,7 +31,7 @@ func ParseDialect(s string) (Dialect, error) {
 	case "sqlite":
 		return SQLite, nil
 	default:
-		return Postgres, fmt.Errorf("unknown dialect %q; supported: postgres, mysql, sqlite", s)
+		return Generic, fmt.Errorf("unknown dialect %q; supported: postgres, mysql, sqlite", s)
 	}
 }
 
@@ -34,6 +39,7 @@ func quoteIdent(name string, d Dialect) string {
 	if d == MySQL {
 		return "`" + strings.ReplaceAll(name, "`", "``") + "`"
 	}
+	// Generic, Postgres, SQLite all use ANSI double-quote identifiers.
 	return `"` + strings.ReplaceAll(name, `"`, `""`) + `"`
 }
 
@@ -73,185 +79,108 @@ func findEnum(typeName string, db *interpreter.Database) *interpreter.Enum {
 	return nil
 }
 
-// mapType maps a DBML type name + args to a SQL type string.
+// mapType maps a DBML type name + args to a SQL/DBML type string.
 // Returns (sqlType, isSerial) where isSerial indicates auto-increment semantics.
+//
+// Generic mode normalises type names to canonical DBML equivalents
+// (e.g. "integer" → "int", "character varying" → "varchar"). Unrecognised
+// types are copied as-is to support custom/vendor-specific types.
+//
+// Dialect-specific modes (Postgres, MySQL, SQLite) pass types through unchanged;
+// only SQL syntax (identifier quoting, enum expansion, auto-increment keywords,
+// etc.) is affected by the dialect.
 func mapType(typeName string, args []string, d Dialect, db *interpreter.Database) (string, bool) {
 	argStr := ""
 	if len(args) > 0 {
 		argStr = "(" + strings.Join(args, ", ") + ")"
 	}
+
+	if d != Generic {
+		// Dialect-specific: pass type through as-is.
+		// Enum types still need expansion because not all dialects support named types.
+		if e := findEnum(typeName, db); e != nil {
+			switch d {
+			case MySQL:
+				vals := make([]string, len(e.Values))
+				for i, v := range e.Values {
+					vals[i] = "'" + strings.ReplaceAll(v.Name, "'", "''") + "'"
+				}
+				return "ENUM(" + strings.Join(vals, ", ") + ")", false
+			case SQLite:
+				return "TEXT", false
+			default: // Postgres: reference the named type
+				return quoteIdent(e.Name, Postgres), false
+			}
+		}
+		// Detect serial semantics so renderColumn can suppress redundant NOT NULL / increment.
+		switch strings.ToLower(typeName) {
+		case "serial":
+			return typeName, true
+		case "bigserial":
+			return typeName, true
+		}
+		return typeName + argStr, false
+	}
+
+	// Generic mode: normalise to canonical DBML type names.
 	lower := strings.ToLower(typeName)
 
-	// Enum type reference
+	// Enum type reference: return the enum's canonical name.
 	if e := findEnum(typeName, db); e != nil {
-		switch d {
-		case MySQL:
-			vals := make([]string, len(e.Values))
-			for i, v := range e.Values {
-				vals[i] = "'" + strings.ReplaceAll(v.Name, "'", "''") + "'"
-			}
-			return "ENUM(" + strings.Join(vals, ", ") + ")", false
-		case SQLite:
-			return "TEXT", false
-		default: // Postgres: reference the named type
-			return quoteIdent(e.Name, Postgres), false
-		}
+		return e.Name, false
 	}
 
 	switch lower {
-	case "int", "integer", "tinyint":
-		if d == MySQL {
-			return "INT", false
+	case "int", "integer", "mediumint":
+		return "int", false
+	case "tinyint":
+		if argStr == "(1)" {
+			return "bool", false
 		}
-		return "INTEGER", false
+		return "int", false
 	case "bigint":
-		if d == SQLite {
-			return "INTEGER", false
-		}
-		return "BIGINT", false
+		return "bigint", false
 	case "smallint":
-		if d == SQLite {
-			return "INTEGER", false
-		}
-		return "SMALLINT", false
-	case "float":
-		switch d {
-		case Postgres:
-			return "REAL", false
-		case MySQL:
-			return "FLOAT", false
-		default:
-			return "REAL", false
-		}
-	case "double":
-		switch d {
-		case Postgres:
-			return "DOUBLE PRECISION", false
-		case MySQL:
-			return "DOUBLE", false
-		default:
-			return "REAL", false
-		}
+		return "smallint", false
+	case "float", "real":
+		return "float", false
+	case "double", "double precision":
+		return "double", false
 	case "decimal", "numeric":
-		if d == SQLite {
-			return "NUMERIC", false
-		}
-		return "DECIMAL" + argStr, false
-	case "varchar":
-		s := argStr
-		if s == "" {
-			s = "(255)"
-		}
-		if d == SQLite {
-			return "TEXT", false
-		}
-		return "VARCHAR" + s, false
-	case "text":
-		return "TEXT", false
-	case "char":
-		s := argStr
-		if s == "" {
-			s = "(1)"
-		}
-		if d == SQLite {
-			return "TEXT", false
-		}
-		return "CHAR" + s, false
+		return "decimal" + argStr, false
+	case "varchar", "character varying":
+		return "varchar" + argStr, false
+	case "text", "tinytext", "mediumtext", "longtext":
+		return "text", false
+	case "char", "character":
+		return "char" + argStr, false
 	case "date":
-		if d == SQLite {
-			return "TEXT", false
-		}
-		return "DATE", false
+		return "date", false
 	case "time":
-		if d == SQLite {
-			return "TEXT", false
-		}
-		return "TIME", false
+		return "time", false
 	case "datetime":
-		switch d {
-		case Postgres:
-			return "TIMESTAMP", false
-		case MySQL:
-			return "DATETIME", false
-		default:
-			return "TEXT", false
-		}
-	case "timestamp":
-		if d == SQLite {
-			return "TEXT", false
-		}
-		return "TIMESTAMP", false
+		return "datetime", false
+	case "timestamp", "timestamp without time zone", "timestamp with time zone":
+		return "timestamp", false
 	case "bool", "boolean":
-		switch d {
-		case Postgres:
-			return "BOOLEAN", false
-		case MySQL:
-			return "BOOLEAN", false
-		default:
-			return "INTEGER", false
-		}
-	case "binary":
-		if d == Postgres {
-			return "BYTEA", false
-		}
-		return "BLOB", false
+		return "bool", false
+	case "blob", "tinyblob", "mediumblob", "longblob", "binary", "bytea":
+		return "binary", false
 	case "varbinary":
-		switch d {
-		case Postgres:
-			return "BYTEA", false
-		case MySQL:
-			return "VARBINARY" + argStr, false
-		default:
-			return "BLOB", false
-		}
+		return "varbinary" + argStr, false
 	case "uuid":
-		switch d {
-		case Postgres:
-			return "UUID", false
-		case MySQL:
-			return "CHAR(36)", false
-		default:
-			return "TEXT", false
-		}
+		return "uuid", false
 	case "json":
-		switch d {
-		case Postgres:
-			return "JSONB", false
-		case MySQL:
-			return "JSON", false
-		default:
-			return "TEXT", false
-		}
+		return "json", false
 	case "jsonb":
-		switch d {
-		case Postgres:
-			return "JSONB", false
-		case MySQL:
-			return "JSON", false
-		default:
-			return "TEXT", false
-		}
+		return "jsonb", false
 	case "serial":
-		switch d {
-		case Postgres:
-			return "SERIAL", true
-		case MySQL:
-			return "INT AUTO_INCREMENT", true
-		default:
-			return "INTEGER", true
-		}
+		return "serial", true
 	case "bigserial":
-		switch d {
-		case Postgres:
-			return "BIGSERIAL", true
-		case MySQL:
-			return "BIGINT AUTO_INCREMENT", true
-		default:
-			return "INTEGER", true
-		}
+		return "bigserial", true
 	}
 
-	// Unknown type: pass through as-is
+	// Unknown/custom type: copy as-is to support vendor-specific types.
 	return typeName + argStr, false
 }
 
@@ -292,7 +221,7 @@ func renderColumn(col interpreter.Column, inlinePK bool, d Dialect, db *interpre
 	sqlType, isSerialType := mapType(col.Type.TypeName, args, d, db)
 	isAutoInc := isSerialType || (col.Increment != nil && *col.Increment)
 
-	// For Postgres: promote integer to SERIAL if auto-increment
+	// For Postgres with [increment]: promote to SERIAL/BIGSERIAL.
 	if d == Postgres && !isSerialType && isAutoInc {
 		if strings.ToLower(col.Type.TypeName) == "bigint" {
 			sqlType = "BIGSERIAL"
@@ -302,10 +231,11 @@ func renderColumn(col interpreter.Column, inlinePK bool, d Dialect, db *interpre
 		isSerialType = true
 	}
 
-	// For MySQL: append AUTO_INCREMENT if not already in the type
+	// For MySQL with [increment]: append AUTO_INCREMENT keyword.
 	if d == MySQL && !isSerialType && isAutoInc {
 		sqlType += " AUTO_INCREMENT"
 	}
+	// Generic and SQLite: no auto-increment keyword; the type string is emitted as-is.
 
 	parts := []string{quoteIdent(col.Name, d), sqlType}
 
@@ -331,6 +261,11 @@ func renderColumn(col interpreter.Column, inlinePK bool, d Dialect, db *interpre
 		} else {
 			parts = append(parts, "PRIMARY KEY")
 		}
+	}
+
+	// MySQL: inline column comment
+	if d == MySQL && col.Note != nil && col.Note.Value != "" {
+		parts = append(parts, "COMMENT '"+strings.ReplaceAll(col.Note.Value, "'", "''")+"'")
 	}
 
 	return strings.Join(parts, " ")
@@ -378,7 +313,11 @@ func createTableSQL(tbl interpreter.Table, db *interpreter.Database, d Dialect) 
 	}
 
 	sb.WriteString(strings.Join(lines, ",\n"))
-	sb.WriteString("\n);\n")
+	if d == MySQL && tbl.Note != nil && tbl.Note.Value != "" {
+		sb.WriteString("\n) COMMENT = '" + strings.ReplaceAll(tbl.Note.Value, "'", "''") + "';\n")
+	} else {
+		sb.WriteString("\n);\n")
+	}
 	return sb.String()
 }
 
@@ -443,6 +382,29 @@ func fkConstraints(db *interpreter.Database, d Dialect) []string {
 	return result
 }
 
+// commentStatements generates COMMENT ON TABLE/COLUMN statements for PostgreSQL.
+func commentStatements(db *interpreter.Database, d Dialect) []string {
+	if d != Postgres {
+		return nil
+	}
+	var stmts []string
+	for _, tbl := range db.Tables {
+		ref := tableRef(tbl, d)
+		if tbl.Note != nil && tbl.Note.Value != "" {
+			stmts = append(stmts, fmt.Sprintf("COMMENT ON TABLE %s IS '%s';",
+				ref, strings.ReplaceAll(tbl.Note.Value, "'", "''")))
+		}
+		for _, col := range tbl.Fields {
+			if col.Note != nil && col.Note.Value != "" {
+				stmts = append(stmts, fmt.Sprintf("COMMENT ON COLUMN %s.%s IS '%s';",
+					ref, quoteIdent(col.Name, d),
+					strings.ReplaceAll(col.Note.Value, "'", "''")))
+			}
+		}
+	}
+	return stmts
+}
+
 // Dump generates a full CREATE TABLE script for the given schema and dialect.
 func Dump(db *interpreter.Database, d Dialect) string {
 	var sb strings.Builder
@@ -470,6 +432,16 @@ func Dump(db *interpreter.Database, d Dialect) string {
 		if len(fks) > 0 {
 			sb.WriteString("\n")
 		}
+	}
+
+	// Comment statements (PostgreSQL only)
+	comments := commentStatements(db, d)
+	for _, c := range comments {
+		sb.WriteString(c)
+		sb.WriteString("\n")
+	}
+	if len(comments) > 0 {
+		sb.WriteString("\n")
 	}
 
 	return sb.String()

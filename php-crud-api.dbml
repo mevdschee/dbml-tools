@@ -1,4 +1,8 @@
-Table "public"."spatial_ref_sys" {
+Project {
+  database_type: 'PostgreSQL'
+}
+
+Table "spatial_ref_sys" {
   "srid" int [pk, not null]
   "auth_name" varchar(256)
   "auth_srid" int
@@ -6,7 +10,7 @@ Table "public"."spatial_ref_sys" {
   "proj4text" varchar(2048)
 }
 
-Table "public"."post_tags" {
+Table "post_tags" {
   "id" serial [pk]
   "post_id" int [not null]
   "tag_id" int [not null]
@@ -18,7 +22,7 @@ Table "public"."post_tags" {
   }
 }
 
-Table "public"."abc_posts" {
+Table "abc_posts" {
   "abc_id" serial [pk]
   "abc_user_id" int [not null]
   "abc_category_id" int [not null]
@@ -30,13 +34,13 @@ Table "public"."abc_posts" {
   }
 }
 
-Table "public"."tags" {
+Table "tags" {
   "id" serial [pk]
   "name" varchar(255) [not null]
   "is_important" bool [not null]
 }
 
-Table "public"."users" {
+Table "users" {
   "id" serial [pk]
   "username" varchar(255) [not null]
   "password" varchar(255) [not null]
@@ -44,20 +48,20 @@ Table "public"."users" {
   "location" public.geometry
 }
 
-Table "public"."countries" {
+Table "countries" {
   "id" serial [pk]
   "name" varchar(255) [not null]
   "shape" public.geometry [not null]
 }
 
-Table "public"."events" {
+Table "events" {
   "id" serial [pk]
   "name" varchar(255) [not null]
   "datetime" timestamp
   "visitors" bigint
 }
 
-Table "public"."products" {
+Table "products" {
   "id" serial [pk]
   "name" varchar(255) [not null]
   "price" decimal(10,2) [not null]
@@ -66,7 +70,7 @@ Table "public"."products" {
   "deleted_at" timestamp
 }
 
-Table "public"."barcodes" {
+Table "barcodes" {
   "id" serial [pk]
   "product_id" int [not null]
   "hex" varchar(255) [not null]
@@ -78,7 +82,7 @@ Table "public"."barcodes" {
   }
 }
 
-Table "public"."kunsthåndværk" {
+Table "kunsthåndværk" {
   "id" varchar(36) [pk, not null]
   "Umlauts ä_ö_ü-COUNT" int [unique, not null]
   "user_id" int [not null]
@@ -92,17 +96,17 @@ Table "public"."kunsthåndværk" {
   }
 }
 
-Table "public"."invisibles" {
+Table "invisibles" {
   "id" varchar(36) [pk, not null]
 }
 
-Table "public"."nopk" {
+Table "nopk" {
   "id" varchar(36) [not null]
 }
 
-Ref: "public"."abc_posts"."abc_user_id" > "public"."users"."id"
-Ref: "public"."barcodes"."product_id" > "public"."products"."id"
-Ref: "public"."kunsthåndværk"."invisible_id" > "public"."invisibles"."id"
-Ref: "public"."kunsthåndværk"."user_id" > "public"."users"."id"
-Ref: "public"."post_tags"."post_id" > "public"."abc_posts"."abc_id"
-Ref: "public"."post_tags"."tag_id" > "public"."tags"."id"
+Ref: "abc_posts"."abc_user_id" > "users"."id"
+Ref: "barcodes"."product_id" > "products"."id"
+Ref: "kunsthåndværk"."invisible_id" > "invisibles"."id"
+Ref: "kunsthåndværk"."user_id" > "users"."id"
+Ref: "post_tags"."post_id" > "abc_posts"."abc_id"
+Ref: "post_tags"."tag_id" > "tags"."id"

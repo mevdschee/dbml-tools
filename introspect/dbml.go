@@ -6,8 +6,13 @@ import (
 )
 
 // GenerateDBML converts a DBSchema to a DBML string.
-func GenerateDBML(schema *DBSchema) string {
+// databaseType, if non-empty, is emitted as a Project block header (e.g. "PostgreSQL", "MySQL").
+func GenerateDBML(schema *DBSchema, databaseType string) string {
 	var sb strings.Builder
+
+	if databaseType != "" {
+		fmt.Fprintf(&sb, "Project {\n  database_type: '%s'\n}\n\n", databaseType)
+	}
 
 	for _, t := range schema.Tables {
 		writeTable(&sb, t)

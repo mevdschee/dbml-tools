@@ -108,7 +108,10 @@ func Run(dsn string, sqlFS embed.FS, opts Options) (string, error) {
 		return "", fmt.Errorf("introspect: %w", err)
 	}
 
-	return GenerateDBML(filterSchema(schema, opts)), nil
+	// "normalized" indicates that column types have been mapped to canonical DBML
+	// type names (e.g. "character varying" → "varchar").  Consumers can use
+	// -d <dialect> on dump/migrate to further transform those types to SQL.
+	return GenerateDBML(filterSchema(schema, opts), "normalized"), nil
 }
 
 // readSQL reads a SQL file from the embedded FS.
