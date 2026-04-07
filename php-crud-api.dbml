@@ -1,0 +1,108 @@
+Table "public"."spatial_ref_sys" {
+  "srid" int [pk, not null]
+  "auth_name" varchar(256)
+  "auth_srid" int
+  "srtext" varchar(2048)
+  "proj4text" varchar(2048)
+}
+
+Table "public"."post_tags" {
+  "id" serial [pk]
+  "post_id" int [not null]
+  "tag_id" int [not null]
+
+  indexes {
+    ("post_id", "tag_id") [unique, name: "post_tags_post_id_tag_id_key"]
+    ("post_id") [name: "post_tags_post_id_idx"]
+    ("tag_id") [name: "post_tags_tag_id_idx"]
+  }
+}
+
+Table "public"."abc_posts" {
+  "abc_id" serial [pk]
+  "abc_user_id" int [not null]
+  "abc_category_id" int [not null]
+  "abc_content" varchar(255) [not null]
+
+  indexes {
+    ("abc_category_id") [name: "abc_posts_category_id_idx"]
+    ("abc_user_id") [name: "abc_posts_user_id_idx"]
+  }
+}
+
+Table "public"."tags" {
+  "id" serial [pk]
+  "name" varchar(255) [not null]
+  "is_important" bool [not null]
+}
+
+Table "public"."users" {
+  "id" serial [pk]
+  "username" varchar(255) [not null]
+  "password" varchar(255) [not null]
+  "api_key" varchar(255)
+  "location" public.geometry
+}
+
+Table "public"."countries" {
+  "id" serial [pk]
+  "name" varchar(255) [not null]
+  "shape" public.geometry [not null]
+}
+
+Table "public"."events" {
+  "id" serial [pk]
+  "name" varchar(255) [not null]
+  "datetime" timestamp
+  "visitors" bigint
+}
+
+Table "public"."products" {
+  "id" serial [pk]
+  "name" varchar(255) [not null]
+  "price" decimal(10,2) [not null]
+  "properties" json [not null]
+  "created_at" timestamp [not null]
+  "deleted_at" timestamp
+}
+
+Table "public"."barcodes" {
+  "id" serial [pk]
+  "product_id" int [not null]
+  "hex" varchar(255) [not null]
+  "bin" binary [not null]
+  "ip_address" varchar(15)
+
+  indexes {
+    ("product_id") [name: "barcodes_product_id_idx"]
+  }
+}
+
+Table "public"."kunsthåndværk" {
+  "id" varchar(36) [pk, not null]
+  "Umlauts ä_ö_ü-COUNT" int [unique, not null]
+  "user_id" int [not null]
+  "invisible" varchar(36)
+  "invisible_id" varchar(36)
+
+  indexes {
+    ("Umlauts ä_ö_ü-COUNT") [name: "kunsthåndværk_Umlauts ä_ö_ü-COUNT_idx"]
+    ("invisible_id") [name: "kunsthåndværk_invisible_id_idx"]
+    ("user_id") [name: "kunsthåndværk_user_id_idx"]
+  }
+}
+
+Table "public"."invisibles" {
+  "id" varchar(36) [pk, not null]
+}
+
+Table "public"."nopk" {
+  "id" varchar(36) [not null]
+}
+
+Ref: "public"."abc_posts"."abc_user_id" > "public"."users"."id"
+Ref: "public"."barcodes"."product_id" > "public"."products"."id"
+Ref: "public"."kunsthåndværk"."invisible_id" > "public"."invisibles"."id"
+Ref: "public"."kunsthåndværk"."user_id" > "public"."users"."id"
+Ref: "public"."post_tags"."post_id" > "public"."abc_posts"."abc_id"
+Ref: "public"."post_tags"."tag_id" > "public"."tags"."id"

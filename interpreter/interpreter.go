@@ -221,7 +221,11 @@ func (interp *Interpreter) interpretField(n parser.Node) *Column {
 
 	switch node := n.(type) {
 	case *parser.FuncAppNode:
-		col.Name = extractName(node.Callee)
+		name := extractName(node.Callee)
+		if !isColumnName(name) {
+			return nil
+		}
+		col.Name = name
 		col.Token = nodeRange(node)
 
 		if len(node.Args) == 0 {
@@ -241,7 +245,11 @@ func (interp *Interpreter) interpretField(n parser.Node) *Column {
 		}
 
 	case *parser.PrimaryExprNode:
-		col.Name = extractName(node)
+		name := extractName(node)
+		if !isColumnName(name) {
+			return nil
+		}
+		col.Name = name
 		col.Token = nodeRange(node)
 		interp.Errors = append(interp.Errors, Error{
 			Message:  fmt.Sprintf("column %q is missing a type", col.Name),
@@ -253,6 +261,21 @@ func (interp *Interpreter) interpretField(n parser.Node) *Column {
 	}
 
 	return col
+}
+
+// isColumnName reports whether s looks like a valid column name rather than a
+// DBML keyword or a stray punctuation token leaking out of an indexes block.
+func isColumnName(s string) bool {
+	if s == "" || s == "indexes" || s == "Note" || s == "note" {
+		return false
+	}
+	// Reject bare punctuation tokens produced when the parser walks into an
+	// indexes { } block without special handling: (, ), {, }, etc.
+	switch s[0] {
+	case '(', ')', '{', '}', '[', ']', '<', '>', '.', ',', ';', ':', '!', '~':
+		return false
+	}
+	return true
 }
 
 func (interp *Interpreter) applyColumnSettings(col *Column, list *parser.ListExprNode) {
@@ -528,7 +551,18 @@ func extractName(n parser.Node) string {
 
 func extractType(n parser.Node) ColumnType {
 	ct := ColumnType{SchemaName: nil, Args: nil}
-	ct.TypeName = extractName(n)
+	if fa, ok := n.(*parser.FuncAppNode); ok {
+		ct.TypeName = extractName(fa.Callee)
+		if len(fa.Args) > 0 {
+			args := make([]string, len(fa.Args))
+			for i, arg := range fa.Args {
+				args[i] = extractStringValue(arg)
+			}
+			ct.Args = args
+		}
+	} else {
+		ct.TypeName = extractName(n)
+	}
 	return ct
 }
 
