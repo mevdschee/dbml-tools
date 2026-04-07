@@ -1,7 +1,7 @@
 # dbml-tools
 
 A CLI toolset for working with [DBML](https://dbml.dbdiagram.io) (Database
-Markup Language) files and live databases.
+Markup Language) files and databases.
 
 Functionality
 
