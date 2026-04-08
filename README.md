@@ -3,6 +3,8 @@
 A CLI toolset for working with [DBML](https://dbml.dbdiagram.io) (Database
 Markup Language) files and databases.
 
+Blog post: https://www.tqdev.com/2026-dbml-database-schema-plain-text-genai/
+
 ## Features
 
 - Convert DSN to DBML
