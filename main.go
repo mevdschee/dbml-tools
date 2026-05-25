@@ -12,6 +12,7 @@ import (
 	"dbml-tools/interpreter"
 	"dbml-tools/introspect"
 	"dbml-tools/lexer"
+	"dbml-tools/lsp"
 	"dbml-tools/parser"
 )
 
@@ -26,6 +27,7 @@ func usage() {
 	fmt.Fprintf(os.Stderr, "  tosql      <file>              Generate CREATE TABLE SQL\n")
 	fmt.Fprintf(os.Stderr, "  todot      <file>              Generate Graphviz DOT diagram\n")
 	fmt.Fprintf(os.Stderr, "  migrate    [options] <old> <new>  Generate migration SQL\n")
+	fmt.Fprintf(os.Stderr, "  lsp        [--log <file>]      Start the Language Server (LSP over stdio)\n")
 	fmt.Fprintf(os.Stderr, "\nSQL dialect is determined by the database_type Project setting in DBML files.\n")
 	fmt.Fprintf(os.Stderr, "\nConnection string examples:\n")
 	fmt.Fprintf(os.Stderr, "  mariadb://user:pass@host:3306/mydb\n")
@@ -51,6 +53,8 @@ func main() {
 		doMigrate(os.Args[2:])
 	case "check":
 		doCheck(os.Args[2:])
+	case "lsp":
+		doLSP(os.Args[2:])
 	default:
 		if len(os.Args) < 3 {
 			usage()
@@ -334,6 +338,19 @@ func doCheck(args []string) {
 	}
 
 	if hasErrors {
+		os.Exit(1)
+	}
+}
+
+func doLSP(args []string) {
+	fs := flag.NewFlagSet("lsp", flag.ExitOnError)
+	logPath := fs.String("log", "", "write LSP server logs to this file (default: discard)")
+	// Accept and ignore --stdio for compatibility with LSP clients (e.g.
+	// vscode-languageclient) that append it when TransportKind.stdio is set.
+	fs.Bool("stdio", false, "use stdio transport (default; accepted for client compatibility)")
+	fs.Parse(args)
+	if err := lsp.RunStdio(*logPath); err != nil {
+		fmt.Fprintf(os.Stderr, "lsp: %v\n", err)
 		os.Exit(1)
 	}
 }

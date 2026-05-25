@@ -591,7 +591,21 @@ func (p *Parser) parseFuncApp() Node {
 		return &PrimaryExprNode{Expr: &VariableNode{Token: op}}
 	}
 
-	callee := p.parsePrimaryExpr()
+	// A statement may begin with a parenthesised tuple — e.g. composite or
+	// parenthesised single-column index entries: `(a, b) [unique]`, `(a)`.
+	// A statement may also begin with a comma — records body rows like
+	// `'1', 'foo'` are split by the block loop into a PrimaryExpr for the
+	// first value plus subsequent FuncApps whose callee is the comma.
+	var callee Node
+	switch p.cur().Kind {
+	case lexer.KindLParen:
+		callee = p.parseTupleExpr()
+	case lexer.KindComma:
+		tok := p.consume()
+		callee = &PrimaryExprNode{Expr: &VariableNode{Token: tok}}
+	default:
+		callee = p.parsePrimaryExpr()
+	}
 	var args []Node
 	for !p.hasNewlineBefore() &&
 		p.cur().Kind != lexer.KindRBrace &&
