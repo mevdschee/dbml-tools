@@ -28,6 +28,7 @@ func usage() {
 	fmt.Fprintf(os.Stderr, "  todot      <file>              Generate Graphviz DOT diagram\n")
 	fmt.Fprintf(os.Stderr, "  migrate    [options] <old> <new>  Generate migration SQL\n")
 	fmt.Fprintf(os.Stderr, "  lsp        [--log <file>]      Start the Language Server (LSP over stdio)\n")
+	fmt.Fprintf(os.Stderr, "  version    [--sha256]          Print version info; --sha256 hashes the binary\n")
 	fmt.Fprintf(os.Stderr, "\nSQL dialect is determined by the database_type Project setting in DBML files.\n")
 	fmt.Fprintf(os.Stderr, "\nConnection string examples:\n")
 	fmt.Fprintf(os.Stderr, "  mariadb://user:pass@host:3306/mydb\n")
@@ -55,6 +56,8 @@ func main() {
 		doCheck(os.Args[2:])
 	case "lsp":
 		doLSP(os.Args[2:])
+	case "version", "--version", "-v":
+		doVersion(os.Args[2:])
 	default:
 		if len(os.Args) < 3 {
 			usage()
