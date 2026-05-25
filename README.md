@@ -244,3 +244,4 @@ client.
 ### Links
 
 - [Github.com - Holistic / DBML: Database Markup Language](https://github.com/holistics/dbml)
+- [Github.com - dbml-tools VSCode extension](https://github.com/mevdschee/dbml-tools-vscode)
