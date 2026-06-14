@@ -1,24 +1,24 @@
 package introspect
 
 import (
+	"context"
 	"database/sql"
-	"embed"
 	"fmt"
 	"strings"
 )
 
-func introspectPostgres(db *sql.DB, schema string, sqlFS embed.FS) (*DBSchema, error) {
+func introspectPostgres(ctx context.Context, db *sql.DB, schema string) (*DBSchema, error) {
 	result := &DBSchema{}
 	tableMap := map[string]*Table{}
 	var tableOrder []string
 	p := map[string]interface{}{"schema": schema}
 
 	// ── 1. Tables & columns ──────────────────────────────────────────────────
-	q, err := readSQL(sqlFS, "sql/postgresql/tables_columns.sql")
+	q, err := readSQL("sql/postgresql/tables_columns.sql")
 	if err != nil {
 		return nil, err
 	}
-	rows, err := runQuery(db, EnginePostgres, q, p)
+	rows, err := runQuery(ctx, db, EnginePostgres, q, p)
 	if err != nil {
 		return nil, fmt.Errorf("tables_columns: %w", err)
 	}
@@ -87,11 +87,11 @@ func introspectPostgres(db *sql.DB, schema string, sqlFS embed.FS) (*DBSchema, e
 	}
 
 	// ── 2. Indexes (includes PK / UNIQUE constraints) ─────────────────────────
-	q, err = readSQL(sqlFS, "sql/postgresql/indexes.sql")
+	q, err = readSQL("sql/postgresql/indexes.sql")
 	if err != nil {
 		return nil, err
 	}
-	rows2, err := runQuery(db, EnginePostgres, q, p)
+	rows2, err := runQuery(ctx, db, EnginePostgres, q, p)
 	if err != nil {
 		return nil, fmt.Errorf("indexes: %w", err)
 	}
@@ -157,11 +157,11 @@ func introspectPostgres(db *sql.DB, schema string, sqlFS embed.FS) (*DBSchema, e
 	}
 
 	// ── 3. Check constraints ─────────────────────────────────────────────────
-	q, err = readSQL(sqlFS, "sql/postgresql/check_constraints.sql")
+	q, err = readSQL("sql/postgresql/check_constraints.sql")
 	if err != nil {
 		return nil, err
 	}
-	rows3, err := runQuery(db, EnginePostgres, q, p)
+	rows3, err := runQuery(ctx, db, EnginePostgres, q, p)
 	if err != nil {
 		return nil, fmt.Errorf("check_constraints: %w", err)
 	}
@@ -187,11 +187,11 @@ func introspectPostgres(db *sql.DB, schema string, sqlFS embed.FS) (*DBSchema, e
 	}
 
 	// ── 4. Enums ─────────────────────────────────────────────────────────────
-	q, err = readSQL(sqlFS, "sql/postgresql/enums.sql")
+	q, err = readSQL("sql/postgresql/enums.sql")
 	if err != nil {
 		return nil, err
 	}
-	rows4, err := runQuery(db, EnginePostgres, q, p)
+	rows4, err := runQuery(ctx, db, EnginePostgres, q, p)
 	if err != nil {
 		return nil, fmt.Errorf("enums: %w", err)
 	}
@@ -223,11 +223,11 @@ func introspectPostgres(db *sql.DB, schema string, sqlFS embed.FS) (*DBSchema, e
 	}
 
 	// ── 5. Foreign keys ──────────────────────────────────────────────────────
-	q, err = readSQL(sqlFS, "sql/postgresql/foreign_keys.sql")
+	q, err = readSQL("sql/postgresql/foreign_keys.sql")
 	if err != nil {
 		return nil, err
 	}
-	rows5, err := runQuery(db, EnginePostgres, q, p)
+	rows5, err := runQuery(ctx, db, EnginePostgres, q, p)
 	if err != nil {
 		return nil, fmt.Errorf("foreign_keys: %w", err)
 	}

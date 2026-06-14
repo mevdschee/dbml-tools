@@ -1,23 +1,23 @@
 package introspect
 
 import (
+	"context"
 	"database/sql"
-	"embed"
 	"fmt"
 	"strings"
 )
 
-func introspectSQLite(db *sql.DB, sqlFS embed.FS) (*DBSchema, error) {
+func introspectSQLite(ctx context.Context, db *sql.DB) (*DBSchema, error) {
 	result := &DBSchema{}
 	tableMap := map[string]*Table{}
 	var tableOrder []string
 
 	// ── 1. Tables & columns ──────────────────────────────────────────────────
-	q, err := readSQL(sqlFS, "sql/sqlite/tables_columns.sql")
+	q, err := readSQL("sql/sqlite/tables_columns.sql")
 	if err != nil {
 		return nil, err
 	}
-	rows, err := db.Query(q)
+	rows, err := db.QueryContext(ctx, q)
 	if err != nil {
 		return nil, fmt.Errorf("tables_columns: %w", err)
 	}
@@ -92,11 +92,11 @@ func introspectSQLite(db *sql.DB, sqlFS embed.FS) (*DBSchema, error) {
 	}
 
 	// ── 2. Indexes ───────────────────────────────────────────────────────────
-	q, err = readSQL(sqlFS, "sql/sqlite/indexes.sql")
+	q, err = readSQL("sql/sqlite/indexes.sql")
 	if err != nil {
 		return nil, err
 	}
-	rows2, err := db.Query(q)
+	rows2, err := db.QueryContext(ctx, q)
 	if err != nil {
 		return nil, fmt.Errorf("indexes: %w", err)
 	}
@@ -157,11 +157,11 @@ func introspectSQLite(db *sql.DB, sqlFS embed.FS) (*DBSchema, error) {
 	}
 
 	// ── 3. Foreign keys ──────────────────────────────────────────────────────
-	q, err = readSQL(sqlFS, "sql/sqlite/foreign_keys.sql")
+	q, err = readSQL("sql/sqlite/foreign_keys.sql")
 	if err != nil {
 		return nil, err
 	}
-	rows3, err := db.Query(q)
+	rows3, err := db.QueryContext(ctx, q)
 	if err != nil {
 		return nil, fmt.Errorf("foreign_keys: %w", err)
 	}

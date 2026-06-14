@@ -1,6 +1,7 @@
 package introspect
 
 import (
+	"context"
 	"database/sql"
 	"fmt"
 	"regexp"
@@ -10,15 +11,16 @@ import (
 var namedParamRe = regexp.MustCompile(`:([a-zA-Z_][a-zA-Z0-9_]*)`)
 
 // runQuery executes sqlText against db, substituting named :param placeholders
-// with the engine-appropriate syntax and values from params.
-func runQuery(db *sql.DB, engine Engine, sqlText string, params map[string]interface{}) (*sql.Rows, error) {
+// with the engine-appropriate syntax and values from params. The query is bound
+// to ctx so callers can apply a timeout or cancellation.
+func runQuery(ctx context.Context, db *sql.DB, engine Engine, sqlText string, params map[string]interface{}) (*sql.Rows, error) {
 	switch engine {
 	case EngineMariaDB:
-		return runMariaDB(db, stripLineComments(sqlText), params)
+		return runMariaDB(ctx, db, stripLineComments(sqlText), params)
 	case EnginePostgres:
-		return runPostgres(db, stripLineComments(sqlText), params)
+		return runPostgres(ctx, db, stripLineComments(sqlText), params)
 	case EngineSQLite:
-		return db.Query(stripLineComments(sqlText))
+		return db.QueryContext(ctx, stripLineComments(sqlText))
 	default:
 		return nil, fmt.Errorf("unsupported engine %d", engine)
 	}
@@ -39,19 +41,19 @@ func stripLineComments(sql string) string {
 
 // runMariaDB replaces each :param occurrence with ? and appends the value to args
 // (each occurrence is a separate positional argument).
-func runMariaDB(db *sql.DB, sqlText string, params map[string]interface{}) (*sql.Rows, error) {
+func runMariaDB(ctx context.Context, db *sql.DB, sqlText string, params map[string]interface{}) (*sql.Rows, error) {
 	var args []interface{}
 	prepared := namedParamRe.ReplaceAllStringFunc(sqlText, func(match string) string {
 		name := match[1:]
 		args = append(args, params[name])
 		return "?"
 	})
-	return db.Query(prepared, args...)
+	return db.QueryContext(ctx, prepared, args...)
 }
 
 // runPostgres replaces each unique :param with $N; the same param always maps
 // to the same $N so it only appears once in args.
-func runPostgres(db *sql.DB, sqlText string, params map[string]interface{}) (*sql.Rows, error) {
+func runPostgres(ctx context.Context, db *sql.DB, sqlText string, params map[string]interface{}) (*sql.Rows, error) {
 	// Hide the PostgreSQL cast operator :: before scanning for :param tokens.
 	const castMark = "\x00\x00"
 	sqlText = strings.ReplaceAll(sqlText, "::", castMark)
@@ -71,5 +73,5 @@ func runPostgres(db *sql.DB, sqlText string, params map[string]interface{}) (*sq
 	})
 
 	prepared = strings.ReplaceAll(prepared, castMark, "::")
-	return db.Query(prepared, args...)
+	return db.QueryContext(ctx, prepared, args...)
 }

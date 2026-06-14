@@ -3,16 +3,12 @@
 package introspect
 
 import (
+	"context"
 	"database/sql"
-	"embed"
 	"encoding/hex"
 	"fmt"
 	"path"
 	"strings"
-
-	_ "github.com/go-sql-driver/mysql"
-	_ "github.com/lib/pq"
-	_ "modernc.org/sqlite"
 )
 
 // Options controls which tables are included in the output.
@@ -74,12 +70,32 @@ func filterSchema(schema *DBSchema, opts Options) *DBSchema {
 	return out
 }
 
-// Run is the main entry point. It parses dsn, opens the database, introspects
-// the schema using the SQL files embedded in sqlFS, and returns DBML output.
-// When normalize is true, column types are mapped to canonical DBML equivalents
-// and database_type is set to "normalized"; otherwise native types are preserved
-// and database_type reflects the actual engine.
-func Run(dsn string, sqlFS embed.FS, opts Options, normalize bool) (string, error) {
+// Introspect reads the schema of an already-open database using engine-specific
+// catalog queries and returns it as a DBSchema. The caller owns the connection
+// (its lifetime, pooling and the identity it authenticates as), which lets a
+// server reuse its own pool instead of opening a fresh connection. For PostgreSQL
+// and MariaDB, schema is the schema/database name to read; for SQLite it is
+// ignored. Every query is bound to ctx. Pair it with GenerateDBML to render DBML.
+func Introspect(ctx context.Context, db *sql.DB, engine Engine, schema string) (*DBSchema, error) {
+	switch engine {
+	case EngineMariaDB:
+		return introspectMariaDB(ctx, db, schema)
+	case EnginePostgres:
+		return introspectPostgres(ctx, db, schema)
+	case EngineSQLite:
+		return introspectSQLite(ctx, db)
+	default:
+		return nil, fmt.Errorf("unsupported engine %d", engine)
+	}
+}
+
+// Run is a convenience entry point for the CLI. It parses dsn, opens its own
+// database connection, introspects the schema, and returns DBML output. When
+// normalize is true, column types are mapped to canonical DBML equivalents and
+// database_type is set to "normalized"; otherwise native types are preserved and
+// database_type reflects the actual engine. The driver named by the DSN scheme
+// must be registered (blank-imported) by the calling binary.
+func Run(dsn string, opts Options, normalize bool) (string, error) {
 	parsed, err := ParseDSN(dsn)
 	if err != nil {
 		return "", err
@@ -97,26 +113,19 @@ func Run(dsn string, sqlFS embed.FS, opts Options, normalize bool) (string, erro
 	}
 	defer db.Close()
 
-	if err := db.Ping(); err != nil {
+	ctx := context.Background()
+	if err := db.PingContext(ctx); err != nil {
 		return "", fmt.Errorf("connect to %s: %w", parsed.DSN, err)
 	}
 
-	var schema *DBSchema
-	switch parsed.Engine {
-	case EngineMariaDB:
-		schema, err = introspectMariaDB(db, parsed.Schema, sqlFS)
-	case EnginePostgres:
-		schema, err = introspectPostgres(db, parsed.Schema, sqlFS)
-	case EngineSQLite:
-		schema, err = introspectSQLite(db, sqlFS)
-	}
+	schema, err := Introspect(ctx, db, parsed.Engine, parsed.Schema)
 	if err != nil {
 		return "", fmt.Errorf("introspect: %w", err)
 	}
 
 	filtered := filterSchema(schema, opts)
 	if opts.Data {
-		if err := fetchData(db, filtered, parsed.Engine); err != nil {
+		if err := fetchData(ctx, db, filtered, parsed.Engine); err != nil {
 			return "", fmt.Errorf("fetch data: %w", err)
 		}
 	}
@@ -150,7 +159,7 @@ func isBinaryType(colType string) bool {
 }
 
 // fetchData queries all rows from each table and populates Table.Records.
-func fetchData(db *sql.DB, schema *DBSchema, engine Engine) error {
+func fetchData(ctx context.Context, db *sql.DB, schema *DBSchema, engine Engine) error {
 	for _, t := range schema.Tables {
 		colNames := make([]string, len(t.Columns))
 		binaryCols := make([]bool, len(t.Columns))
@@ -167,7 +176,7 @@ func fetchData(db *sql.DB, schema *DBSchema, engine Engine) error {
 			strings.Join(quotedCols, ", "),
 			quoteIdentSQL(t.Name, engine))
 
-		rows, err := db.Query(query)
+		rows, err := db.QueryContext(ctx, query)
 		if err != nil {
 			return fmt.Errorf("select %s: %w", t.Name, err)
 		}
@@ -227,13 +236,4 @@ func quoteIdentSQL(name string, engine Engine) string {
 	default:
 		return `"` + strings.ReplaceAll(name, `"`, `""`) + `"`
 	}
-}
-
-// readSQL reads a SQL file from the embedded FS.
-func readSQL(sqlFS embed.FS, path string) (string, error) {
-	b, err := sqlFS.ReadFile(path)
-	if err != nil {
-		return "", fmt.Errorf("read %s: %w", path, err)
-	}
-	return string(b), nil
 }

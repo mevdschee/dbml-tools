@@ -1,24 +1,24 @@
 package introspect
 
 import (
+	"context"
 	"database/sql"
-	"embed"
 	"fmt"
 	"strings"
 )
 
-func introspectMariaDB(db *sql.DB, schema string, sqlFS embed.FS) (*DBSchema, error) {
+func introspectMariaDB(ctx context.Context, db *sql.DB, schema string) (*DBSchema, error) {
 	result := &DBSchema{}
 	tableMap := map[string]*Table{}
 	var tableOrder []string
 	p := map[string]interface{}{"schema": schema}
 
 	// ── 1. Tables & columns ──────────────────────────────────────────────────
-	q, err := readSQL(sqlFS, "sql/mariadb/tables_columns.sql")
+	q, err := readSQL("sql/mariadb/tables_columns.sql")
 	if err != nil {
 		return nil, err
 	}
-	rows, err := runQuery(db, EngineMariaDB, q, p)
+	rows, err := runQuery(ctx, db, EngineMariaDB, q, p)
 	if err != nil {
 		return nil, fmt.Errorf("tables_columns: %w", err)
 	}
@@ -72,11 +72,11 @@ func introspectMariaDB(db *sql.DB, schema string, sqlFS embed.FS) (*DBSchema, er
 	}
 
 	// ── 2. Enums (inline per-column) ─────────────────────────────────────────
-	q, err = readSQL(sqlFS, "sql/mariadb/enums.sql")
+	q, err = readSQL("sql/mariadb/enums.sql")
 	if err != nil {
 		return nil, err
 	}
-	rows2, err := runQuery(db, EngineMariaDB, q, p)
+	rows2, err := runQuery(ctx, db, EngineMariaDB, q, p)
 	if err != nil {
 		return nil, fmt.Errorf("enums: %w", err)
 	}
@@ -107,11 +107,11 @@ func introspectMariaDB(db *sql.DB, schema string, sqlFS embed.FS) (*DBSchema, er
 	}
 
 	// ── 3. Constraints (PRIMARY KEY, UNIQUE) ─────────────────────────────────
-	q, err = readSQL(sqlFS, "sql/mariadb/constraints.sql")
+	q, err = readSQL("sql/mariadb/constraints.sql")
 	if err != nil {
 		return nil, err
 	}
-	rows3, err := runQuery(db, EngineMariaDB, q, p)
+	rows3, err := runQuery(ctx, db, EngineMariaDB, q, p)
 	if err != nil {
 		return nil, fmt.Errorf("constraints: %w", err)
 	}
@@ -154,11 +154,11 @@ func introspectMariaDB(db *sql.DB, schema string, sqlFS embed.FS) (*DBSchema, er
 	}
 
 	// ── 4. Indexes ───────────────────────────────────────────────────────────
-	q, err = readSQL(sqlFS, "sql/mariadb/indexes.sql")
+	q, err = readSQL("sql/mariadb/indexes.sql")
 	if err != nil {
 		return nil, err
 	}
-	rows4, err := runQuery(db, EngineMariaDB, q, p)
+	rows4, err := runQuery(ctx, db, EngineMariaDB, q, p)
 	if err != nil {
 		return nil, fmt.Errorf("indexes: %w", err)
 	}
@@ -207,11 +207,11 @@ func introspectMariaDB(db *sql.DB, schema string, sqlFS embed.FS) (*DBSchema, er
 	}
 
 	// ── 5. Check constraints ─────────────────────────────────────────────────
-	q, err = readSQL(sqlFS, "sql/mariadb/check_constraints.sql")
+	q, err = readSQL("sql/mariadb/check_constraints.sql")
 	if err != nil {
 		return nil, err
 	}
-	rows5, err := runQuery(db, EngineMariaDB, q, p)
+	rows5, err := runQuery(ctx, db, EngineMariaDB, q, p)
 	if err != nil {
 		// check_constraints may not exist on older MariaDB — skip gracefully
 		_ = err
@@ -235,11 +235,11 @@ func introspectMariaDB(db *sql.DB, schema string, sqlFS embed.FS) (*DBSchema, er
 	}
 
 	// ── 6. Foreign keys ──────────────────────────────────────────────────────
-	q, err = readSQL(sqlFS, "sql/mariadb/foreign_keys.sql")
+	q, err = readSQL("sql/mariadb/foreign_keys.sql")
 	if err != nil {
 		return nil, err
 	}
-	rows6, err := runQuery(db, EngineMariaDB, q, p)
+	rows6, err := runQuery(ctx, db, EngineMariaDB, q, p)
 	if err != nil {
 		return nil, fmt.Errorf("foreign_keys: %w", err)
 	}

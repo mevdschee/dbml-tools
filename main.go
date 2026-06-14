@@ -1,12 +1,18 @@
 package main
 
 import (
-	"embed"
 	"encoding/json"
 	"flag"
 	"fmt"
 	"os"
 	"strings"
+
+	// Database drivers are blank-imported here, in the binary, so introspect.Run's
+	// sql.Open can find them at runtime. The introspect package itself stays
+	// driver-free so it can be imported without compiling in these drivers.
+	_ "github.com/go-sql-driver/mysql"
+	_ "github.com/lib/pq"
+	_ "modernc.org/sqlite"
 
 	"dbml-tools/generator"
 	"dbml-tools/interpreter"
@@ -100,9 +106,6 @@ func parseAndInterpret(source string) *interpreter.Database {
 	return interp.Interpret(prog)
 }
 
-//go:embed sql
-var sqlFiles embed.FS
-
 func doToDBML(args []string) {
 	fs := flag.NewFlagSet("todbml", flag.ExitOnError)
 	normalize := fs.Bool("normalize", false, "normalize column types to database-agnostic DBML equivalents")
@@ -126,7 +129,7 @@ func doToDBML(args []string) {
 		Data:    *data,
 	}
 
-	dbml, err := introspect.Run(fs.Arg(0), sqlFiles, opts, *normalize)
+	dbml, err := introspect.Run(fs.Arg(0), opts, *normalize)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		os.Exit(1)
@@ -227,7 +230,7 @@ func doMigrate(args []string) {
 // loadSchema reads a schema from either a DBML file path or a live database DSN.
 func loadSchema(arg string, opts introspect.Options) (*interpreter.Database, error) {
 	if _, err := introspect.ParseDSN(arg); err == nil {
-		dbml, err := introspect.Run(arg, sqlFiles, opts, false)
+		dbml, err := introspect.Run(arg, opts, false)
 		if err != nil {
 			return nil, err
 		}
