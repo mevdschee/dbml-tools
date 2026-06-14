@@ -1,8 +1,9 @@
 package analysis
 
 import (
-	"dbml-tools/parser"
 	"sort"
+
+	"github.com/mevdschee/dbml-tools/parser"
 )
 
 // SpanIndex maps a rune offset to the chain of AST nodes that contain it.

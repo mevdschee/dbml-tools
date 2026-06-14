@@ -1,10 +1,11 @@
 package interpreter
 
 import (
-	"dbml-tools/lexer"
-	"dbml-tools/parser"
 	"fmt"
 	"strings"
+
+	"github.com/mevdschee/dbml-tools/lexer"
+	"github.com/mevdschee/dbml-tools/parser"
 )
 
 // ---------------------------------------------------------------------------
@@ -12,16 +13,16 @@ import (
 // ---------------------------------------------------------------------------
 
 type Database struct {
-	Schemas       []interface{}  `json:"schemas"`
-	Tables        []Table        `json:"tables"`
-	Notes         []interface{}  `json:"notes"`
-	Refs          []Ref          `json:"refs"`
-	Enums         []Enum         `json:"enums"`
-	TableGroups   []TableGroup   `json:"tableGroups"`
-	Aliases       []interface{}  `json:"aliases"`
-	Project       interface{}    `json:"project"`
-	TablePartials []interface{}  `json:"tablePartials"`
-	Records       []interface{}  `json:"records"`
+	Schemas       []interface{} `json:"schemas"`
+	Tables        []Table       `json:"tables"`
+	Notes         []interface{} `json:"notes"`
+	Refs          []Ref         `json:"refs"`
+	Enums         []Enum        `json:"enums"`
+	TableGroups   []TableGroup  `json:"tableGroups"`
+	Aliases       []interface{} `json:"aliases"`
+	Project       interface{}   `json:"project"`
+	TablePartials []interface{} `json:"tablePartials"`
+	Records       []interface{} `json:"records"`
 }
 
 // TableRecords holds parsed records data for a table.
@@ -44,16 +45,16 @@ type Table struct {
 }
 
 type Column struct {
-	Name       string        `json:"name"`
-	Type       ColumnType    `json:"type"`
-	Token      TokenRange    `json:"token"`
-	InlineRefs []interface{} `json:"inline_refs"`
-	PK         bool          `json:"pk"`
-	Increment  *bool         `json:"increment,omitempty"`
-	Unique     bool          `json:"unique"`
-	NotNull    *bool         `json:"not_null,omitempty"`
-	Note       *Note         `json:"note,omitempty"`
-	DBDefault  *Default      `json:"dbdefault,omitempty"`
+	Name       string         `json:"name"`
+	Type       ColumnType     `json:"type"`
+	Token      TokenRange     `json:"token"`
+	InlineRefs []interface{}  `json:"inline_refs"`
+	PK         bool           `json:"pk"`
+	Increment  *bool          `json:"increment,omitempty"`
+	Unique     bool           `json:"unique"`
+	NotNull    *bool          `json:"not_null,omitempty"`
+	Note       *Note          `json:"note,omitempty"`
+	DBDefault  *Default       `json:"dbdefault,omitempty"`
 	Checks     *[]interface{} `json:"checks,omitempty"`
 }
 
@@ -112,8 +113,8 @@ type EnumValue struct {
 }
 
 type TableGroup struct {
-	Name   string   `json:"name"`
-	Tables []string `json:"tables"`
+	Name   string     `json:"name"`
+	Tables []string   `json:"tables"`
 	Token  TokenRange `json:"token"`
 }
 

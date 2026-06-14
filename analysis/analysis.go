@@ -6,9 +6,9 @@
 package analysis
 
 import (
-	"dbml-tools/interpreter"
-	"dbml-tools/lexer"
-	"dbml-tools/parser"
+	"github.com/mevdschee/dbml-tools/interpreter"
+	"github.com/mevdschee/dbml-tools/lexer"
+	"github.com/mevdschee/dbml-tools/parser"
 )
 
 // Range is a half-open rune offset range [Start, End).

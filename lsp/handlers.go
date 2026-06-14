@@ -1,11 +1,12 @@
 package lsp
 
 import (
-	"dbml-tools/analysis"
-	"dbml-tools/interpreter"
-	"dbml-tools/lexer"
-	"dbml-tools/parser"
 	"encoding/json"
+
+	"github.com/mevdschee/dbml-tools/analysis"
+	"github.com/mevdschee/dbml-tools/interpreter"
+	"github.com/mevdschee/dbml-tools/lexer"
+	"github.com/mevdschee/dbml-tools/parser"
 )
 
 // ---------------------------------------------------------------------------

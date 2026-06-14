@@ -1,9 +1,10 @@
 package generator
 
 import (
-	"dbml-tools/interpreter"
 	"fmt"
 	"strings"
+
+	"github.com/mevdschee/dbml-tools/interpreter"
 )
 
 // escDot escapes a string for use in a Graphviz HTML label.

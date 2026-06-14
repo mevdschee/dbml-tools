@@ -1,10 +1,11 @@
 package analysis
 
 import (
-	"dbml-tools/lexer"
-	"dbml-tools/parser"
 	"sort"
 	"strings"
+
+	"github.com/mevdschee/dbml-tools/lexer"
+	"github.com/mevdschee/dbml-tools/parser"
 )
 
 // CompletionKind tags completion items so the LSP wire layer can map them to

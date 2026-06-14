@@ -1,8 +1,9 @@
 package parser
 
 import (
-	"dbml-tools/lexer"
 	"testing"
+
+	"github.com/mevdschee/dbml-tools/lexer"
 )
 
 func parse(src string) (*ProgramNode, []Error) {

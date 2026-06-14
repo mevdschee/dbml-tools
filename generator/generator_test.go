@@ -1,12 +1,13 @@
 package generator
 
 import (
-	"dbml-tools/interpreter"
-	"dbml-tools/lexer"
-	"dbml-tools/parser"
 	"os"
 	"strings"
 	"testing"
+
+	"github.com/mevdschee/dbml-tools/interpreter"
+	"github.com/mevdschee/dbml-tools/lexer"
+	"github.com/mevdschee/dbml-tools/parser"
 )
 
 func parseDBML(src string) *interpreter.Database {

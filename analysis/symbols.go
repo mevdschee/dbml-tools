@@ -1,10 +1,11 @@
 package analysis
 
 import (
-	"dbml-tools/interpreter"
-	"dbml-tools/lexer"
-	"dbml-tools/parser"
 	"strings"
+
+	"github.com/mevdschee/dbml-tools/interpreter"
+	"github.com/mevdschee/dbml-tools/lexer"
+	"github.com/mevdschee/dbml-tools/parser"
 )
 
 type SymbolKind int

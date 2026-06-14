@@ -1,8 +1,9 @@
 package parser
 
 import (
-	"dbml-tools/lexer"
 	"fmt"
+
+	"github.com/mevdschee/dbml-tools/lexer"
 )
 
 // ---------------------------------------------------------------------------
@@ -63,7 +64,7 @@ func (n *ProgramNode) ToJSON() interface{} {
 
 type ElementDeclNode struct {
 	Type  lexer.Token
-	Name  Node        // may be nil
+	Name  Node // may be nil
 	As    *lexer.Token
 	Alias Node
 	Attrs Node // ListExprNode, may be nil
@@ -264,9 +265,9 @@ func (n *ListExprNode) ToJSON() interface{} {
 // AttributeNode -------------------------------------------------------------
 
 type AttributeNode struct {
-	Name  Node // PrimaryExprNode or IdentStreamNode
+	Name     Node // PrimaryExprNode or IdentStreamNode
 	ColonTok *lexer.Token
-	Value Node // may be nil
+	Value    Node // may be nil
 }
 
 func (n *AttributeNode) FirstToken() lexer.Token { return n.Name.FirstToken() }

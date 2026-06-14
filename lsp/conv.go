@@ -1,18 +1,19 @@
 package lsp
 
 import (
-	"dbml-tools/analysis"
 	"unicode/utf16"
+
+	"github.com/mevdschee/dbml-tools/analysis"
 )
 
 // document holds the source text along with a precomputed line offsets table
 // and per-line rune→UTF-16 mappings, so we can convert offsets quickly.
 type document struct {
-	uri     string
-	version int
-	text    string
-	lines   []int           // rune offset of each line start
-	runes   []rune          // cached []rune(text)
+	uri      string
+	version  int
+	text     string
+	lines    []int  // rune offset of each line start
+	runes    []rune // cached []rune(text)
 	analysis *analysis.Analysis
 }
 

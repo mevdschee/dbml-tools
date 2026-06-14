@@ -1,4 +1,4 @@
-module dbml-tools
+module github.com/mevdschee/dbml-tools
 
 go 1.21
 

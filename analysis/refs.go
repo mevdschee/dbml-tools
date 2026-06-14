@@ -1,9 +1,10 @@
 package analysis
 
 import (
-	"dbml-tools/lexer"
-	"dbml-tools/parser"
 	"strings"
+
+	"github.com/mevdschee/dbml-tools/lexer"
+	"github.com/mevdschee/dbml-tools/parser"
 )
 
 type RefSiteKind int

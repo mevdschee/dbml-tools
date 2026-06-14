@@ -1,10 +1,11 @@
 package analysis
 
 import (
-	"dbml-tools/lexer"
-	"dbml-tools/parser"
 	"fmt"
 	"strings"
+
+	"github.com/mevdschee/dbml-tools/lexer"
+	"github.com/mevdschee/dbml-tools/parser"
 )
 
 // HoverResult is the markdown payload and the range of the hovered token.

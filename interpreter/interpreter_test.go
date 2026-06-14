@@ -1,9 +1,10 @@
 package interpreter
 
 import (
-	"dbml-tools/lexer"
-	"dbml-tools/parser"
 	"testing"
+
+	"github.com/mevdschee/dbml-tools/lexer"
+	"github.com/mevdschee/dbml-tools/parser"
 )
 
 func interpret(src string) (*Database, []Error) {

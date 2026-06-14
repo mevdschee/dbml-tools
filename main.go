@@ -14,12 +14,12 @@ import (
 	_ "github.com/lib/pq"
 	_ "modernc.org/sqlite"
 
-	"dbml-tools/generator"
-	"dbml-tools/interpreter"
-	"dbml-tools/introspect"
-	"dbml-tools/lexer"
-	"dbml-tools/lsp"
-	"dbml-tools/parser"
+	"github.com/mevdschee/dbml-tools/generator"
+	"github.com/mevdschee/dbml-tools/interpreter"
+	"github.com/mevdschee/dbml-tools/introspect"
+	"github.com/mevdschee/dbml-tools/lexer"
+	"github.com/mevdschee/dbml-tools/lsp"
+	"github.com/mevdschee/dbml-tools/parser"
 )
 
 func usage() {

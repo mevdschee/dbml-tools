@@ -1,9 +1,10 @@
 package generator
 
 import (
-	"dbml-tools/interpreter"
 	"fmt"
 	"strings"
+
+	"github.com/mevdschee/dbml-tools/interpreter"
 )
 
 // Dialect represents the target SQL dialect.
