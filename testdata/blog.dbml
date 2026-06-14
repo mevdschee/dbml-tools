@@ -46,7 +46,7 @@ Table "categories" {
 }
 
 Table "comments" {
-  "id" int [pk, increment]
+  "id" bigint [pk, increment]
   "post_id" int [not null]
   "message" varchar(255) [not null]
   "category_id" int [not null]

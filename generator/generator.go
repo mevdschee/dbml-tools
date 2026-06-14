@@ -273,6 +273,16 @@ func renderColumn(col interpreter.Column, inlinePK bool, d Dialect, db *interpre
 		isSerialType = true
 	}
 
+	// For Generic with [increment]: represent as canonical serial/bigserial.
+	if d == Generic && !isSerialType && isAutoInc {
+		if strings.ToLower(col.Type.TypeName) == "bigint" {
+			sqlType = "bigserial"
+		} else {
+			sqlType = "serial"
+		}
+		isSerialType = true
+	}
+
 	// For MariaDB with serial type or [increment]: append AUTO_INCREMENT keyword.
 	if d == MariaDB && isAutoInc {
 		sqlType += " AUTO_INCREMENT"
