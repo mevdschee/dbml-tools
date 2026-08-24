@@ -190,15 +190,14 @@ func (interp *Interpreter) Interpret(prog *parser.ProgramNode) *Database {
 
 func (interp *Interpreter) interpretTable(db *Database, decl *parser.ElementDeclNode) {
 	tbl := Table{
-		SchemaName: nil,
-		Alias:      nil,
-		Indexes:    []interface{}{},
-		Partials:   []interface{}{},
-		Checks:     []interface{}{},
-		Token:      nodeRange(decl),
+		Alias:    nil,
+		Indexes:  []interface{}{},
+		Partials: []interface{}{},
+		Checks:   []interface{}{},
+		Token:    nodeRange(decl),
 	}
 
-	tbl.Name = extractName(decl.Name)
+	tbl.SchemaName, tbl.Name = splitQualifiedName(decl.Name)
 
 	if decl.Alias != nil {
 		a := extractName(decl.Alias)
@@ -273,8 +272,18 @@ func (interp *Interpreter) interpretField(n parser.Node) *Column {
 		}
 		col.Type = extractType(node.Args[0])
 
+		// A schema-qualified type (`my_schema.my_type`) parses as three
+		// separate args: the schema, the dot and the type name.
+		rest := node.Args[1:]
+		if len(rest) >= 2 && extractName(rest[0]) == "." {
+			schema := col.Type.TypeName
+			col.Type = extractType(rest[1])
+			col.Type.SchemaName = &schema
+			rest = rest[2:]
+		}
+
 		// process remaining args: type args (tuple) and settings (list)
-		for _, arg := range node.Args[1:] {
+		for _, arg := range rest {
 			if list, ok := arg.(*parser.ListExprNode); ok {
 				interp.applyColumnSettings(col, list)
 			} else if tuple, ok := arg.(*parser.TupleExprNode); ok {
@@ -530,10 +539,9 @@ func extractEndpoint(n parser.Node, relation string) RefEndpoint {
 
 func (interp *Interpreter) interpretEnum(db *Database, decl *parser.ElementDeclNode) {
 	e := Enum{
-		Name:       extractName(decl.Name),
-		SchemaName: nil,
-		Token:      nodeRange(decl),
+		Token: nodeRange(decl),
 	}
+	e.SchemaName, e.Name = splitQualifiedName(decl.Name)
 
 	block, ok := decl.Body.(*parser.BlockExprNode)
 	if ok {
@@ -641,6 +649,26 @@ func extractName(n parser.Node) string {
 		return s
 	}
 	return ""
+}
+
+// splitQualifiedName splits a declaration name into its optional schema part
+// and the object name: `my_schema.my_table` yields ("my_schema", "my_table").
+// A quoted name containing a dot is a single identifier and keeps its schema
+// unset.
+func splitQualifiedName(n parser.Node) (*string, string) {
+	switch node := n.(type) {
+	case *parser.PrimaryExprNode:
+		return splitQualifiedName(node.Expr)
+	case *parser.InfixExprNode:
+		if node.Op.Value == "." {
+			schema := extractName(node.Left)
+			name := extractName(node.Right)
+			if schema != "" && name != "" {
+				return &schema, name
+			}
+		}
+	}
+	return nil, extractName(n)
 }
 
 func extractType(n parser.Node) ColumnType {

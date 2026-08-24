@@ -389,3 +389,71 @@ func TestInterpretSchemaQualifiedCompositeRef(t *testing.T) {
 		t.Errorf("expected fields \"x,y\", got %q", got)
 	}
 }
+
+func TestInterpretSchemaQualifiedTable(t *testing.T) {
+	db, errs := interpret("Table my_schema.my_table {\n  id int [pk]\n}\n")
+	if len(errs) > 0 {
+		t.Fatalf("unexpected errors: %v", errs)
+	}
+	tbl := db.Tables[0]
+	if tbl.SchemaName == nil || *tbl.SchemaName != "my_schema" {
+		t.Errorf("expected schema \"my_schema\", got %v", tbl.SchemaName)
+	}
+	if tbl.Name != "my_table" {
+		t.Errorf("expected table \"my_table\", got %q", tbl.Name)
+	}
+}
+
+func TestInterpretQuotedSchemaQualifiedTable(t *testing.T) {
+	db, errs := interpret("Table \"my schema\".\"my table\" {\n  id int [pk]\n}\n")
+	if len(errs) > 0 {
+		t.Fatalf("unexpected errors: %v", errs)
+	}
+	tbl := db.Tables[0]
+	if tbl.SchemaName == nil || *tbl.SchemaName != "my schema" {
+		t.Errorf("expected schema \"my schema\", got %v", tbl.SchemaName)
+	}
+	if tbl.Name != "my table" {
+		t.Errorf("expected table \"my table\", got %q", tbl.Name)
+	}
+}
+
+func TestInterpretDottedTableNameIsNotSplit(t *testing.T) {
+	db, errs := interpret("Table \"dotted.name\" {\n  id int [pk]\n}\n")
+	if len(errs) > 0 {
+		t.Fatalf("unexpected errors: %v", errs)
+	}
+	tbl := db.Tables[0]
+	if tbl.SchemaName != nil {
+		t.Errorf("expected no schema, got %q", *tbl.SchemaName)
+	}
+	if tbl.Name != "dotted.name" {
+		t.Errorf("expected table \"dotted.name\", got %q", tbl.Name)
+	}
+}
+
+func TestInterpretSchemaQualifiedEnumAndType(t *testing.T) {
+	src := "Enum my_schema.status {\n  active\n}\n" +
+		"Table t {\n  state my_schema.status [not null]\n}\n"
+	db, errs := interpret(src)
+	if len(errs) > 0 {
+		t.Fatalf("unexpected errors: %v", errs)
+	}
+	e := db.Enums[0]
+	if e.SchemaName == nil || *e.SchemaName != "my_schema" {
+		t.Errorf("expected enum schema \"my_schema\", got %v", e.SchemaName)
+	}
+	if e.Name != "status" {
+		t.Errorf("expected enum name \"status\", got %q", e.Name)
+	}
+	col := db.Tables[0].Fields[0]
+	if col.Type.SchemaName == nil || *col.Type.SchemaName != "my_schema" {
+		t.Errorf("expected type schema \"my_schema\", got %v", col.Type.SchemaName)
+	}
+	if col.Type.TypeName != "status" {
+		t.Errorf("expected type name \"status\", got %q", col.Type.TypeName)
+	}
+	if col.NotNull == nil || !*col.NotNull {
+		t.Error("expected [not null] setting to survive the qualified type")
+	}
+}

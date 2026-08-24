@@ -79,36 +79,38 @@ func Dot(db *interpreter.Database) string {
 		default:
 			continue
 		}
-		if fkCols[child.TableName] == nil {
-			fkCols[child.TableName] = make(map[string]bool)
+		childKey := endpointKey(child)
+		if fkCols[childKey] == nil {
+			fkCols[childKey] = make(map[string]bool)
 		}
 		for _, f := range child.FieldNames {
-			fkCols[child.TableName][f] = true
+			fkCols[childKey][f] = true
 		}
 	}
 
 	// Emit table nodes
 	for _, tbl := range db.Tables {
-		id := dotID(tbl.Name)
+		name := tableKey(tbl)
+		id := dotID(name)
 		sb.WriteString(fmt.Sprintf("    %s [label=<\n", id))
 		sb.WriteString("        <TABLE BORDER=\"0\" CELLBORDER=\"1\" CELLSPACING=\"0\" CELLPADDING=\"6\">\n")
 
 		// Header row
 		sb.WriteString(fmt.Sprintf(
 			"            <TR><TD COLSPAN=\"3\" BGCOLOR=\"#4a86c8\" ALIGN=\"CENTER\"><FONT COLOR=\"#ffffff\"><B>%s</B></FONT></TD></TR>\n",
-			escDot(tbl.Name),
+			escDot(name),
 		))
 
 		// Column rows
 		for _, col := range tbl.Fields {
 			args := typeArgs(col)
-			sqlType, _ := mapType(col.Type.TypeName, args, Generic, db)
+			sqlType, _ := mapType(col.Type, args, Generic, db)
 
 			// Key indicator
 			keyIcon := " "
 			if col.PK {
 				keyIcon = "PK"
-			} else if fkCols[tbl.Name] != nil && fkCols[tbl.Name][col.Name] {
+			} else if fkCols[name] != nil && fkCols[name][col.Name] {
 				keyIcon = "FK"
 			}
 
@@ -186,8 +188,8 @@ func Dot(db *interpreter.Database) string {
 
 		sb.WriteString(fmt.Sprintf(
 			"    %s -> %s [arrowhead=%s arrowtail=teeodot dir=both xlabel=\"%s\"];\n",
-			dotID(child.TableName),
-			dotID(parent.TableName),
+			dotID(endpointKey(child)),
+			dotID(endpointKey(parent)),
 			arrowhead, label,
 		))
 	}
