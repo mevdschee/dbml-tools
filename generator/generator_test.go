@@ -412,3 +412,86 @@ Ref {
 		}
 	}
 }
+
+const schemaQualifiedDBML = `
+Enum my_schema.status {
+  active
+  inactive
+}
+
+Table my_schema.users {
+  id int [pk, increment]
+  state my_schema.status
+  name varchar [note: 'the name']
+}
+
+Table my_schema.posts {
+  id int [pk]
+  user_id int
+}
+
+Ref: my_schema.posts.user_id > my_schema.users.id
+`
+
+func TestDumpSchemaQualifiedPostgres(t *testing.T) {
+	got := Dump(parseDBML(schemaQualifiedDBML), Postgres)
+
+	checks := []string{
+		`CREATE TYPE "my_schema"."status" AS ENUM (`,
+		`CREATE TABLE "my_schema"."users" (`,
+		`"state" "my_schema"."status"`,
+		`ALTER TABLE "my_schema"."posts" ADD CONSTRAINT "fk_posts_user_id" FOREIGN KEY ("user_id") REFERENCES "my_schema"."users" ("id");`,
+		`COMMENT ON COLUMN "my_schema"."users"."name" IS 'the name';`,
+	}
+	for _, want := range checks {
+		if !strings.Contains(got, want) {
+			t.Errorf("expected %q in:\n%s", want, got)
+		}
+	}
+	if strings.Contains(got, `"my_schema.users"`) {
+		t.Errorf("schema and table must be quoted separately:\n%s", got)
+	}
+}
+
+func TestDumpSchemaQualifiedMariaDB(t *testing.T) {
+	got := Dump(parseDBML(schemaQualifiedDBML), MariaDB)
+
+	if !strings.Contains(got, "CREATE TABLE `my_schema`.`users` (") {
+		t.Errorf("expected separately quoted schema and table:\n%s", got)
+	}
+	if strings.Contains(got, "`my_schema.users`") {
+		t.Errorf("schema and table must be quoted separately:\n%s", got)
+	}
+}
+
+func TestDumpQuotedDottedTableName(t *testing.T) {
+	got := Dump(parseDBML("Table \"dotted.name\" {\n  id int [pk]\n}\n"), Postgres)
+	if !strings.Contains(got, `CREATE TABLE "dotted.name" (`) {
+		t.Errorf("a quoted name containing a dot is a single identifier:\n%s", got)
+	}
+}
+
+func TestDumpSchemaQualifiedRecords(t *testing.T) {
+	src := "Table my_schema.users {\n  id int [pk]\n  records (\"id\") {\n    '1'\n  }\n}\n"
+	got := Dump(parseDBML(src), Postgres)
+	if !strings.Contains(got, `INSERT INTO "my_schema"."users"`) {
+		t.Errorf("expected schema-qualified INSERT:\n%s", got)
+	}
+}
+
+func TestMigrateSchemaQualified(t *testing.T) {
+	oldDB := parseDBML("Table s1.t {\n  id int [pk]\n  a int\n}\nTable s2.t {\n  id int [pk]\n}\n")
+	newDB := parseDBML("Table s1.t {\n  id int [pk]\n  a bigint\n}\nTable s3.t {\n  id int [pk]\n}\n")
+	got := Migrate(oldDB, newDB, Postgres)
+
+	checks := []string{
+		`CREATE TABLE "s3"."t" (`,
+		`ALTER TABLE "s1"."t" ALTER COLUMN "a" TYPE bigint;`,
+		`DROP TABLE "s2"."t";`,
+	}
+	for _, want := range checks {
+		if !strings.Contains(got, want) {
+			t.Errorf("expected %q in:\n%s", want, got)
+		}
+	}
+}

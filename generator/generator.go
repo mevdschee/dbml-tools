@@ -79,11 +79,35 @@ func quoteIdent(name string, d Dialect) string {
 	return `"` + strings.ReplaceAll(name, `"`, `""`) + `"`
 }
 
-func tableRef(tbl interpreter.Table, d Dialect) string {
-	if tbl.SchemaName != nil && *tbl.SchemaName != "" && d == Postgres {
-		return quoteIdent(*tbl.SchemaName, d) + "." + quoteIdent(tbl.Name, d)
+// schemaRef renders a schema-qualified identifier, quoting each part
+// separately so that `my_schema.my_table` becomes "my_schema"."my_table"
+// instead of a single "my_schema.my_table" identifier.
+func schemaRef(schema *string, name string, d Dialect) string {
+	if schema != nil && *schema != "" {
+		return quoteIdent(*schema, d) + "." + quoteIdent(name, d)
 	}
-	return quoteIdent(tbl.Name, d)
+	return quoteIdent(name, d)
+}
+
+// qualifiedName joins an optional schema with an object name, unquoted, for
+// use as a map key or in a comment.
+func qualifiedName(schema *string, name string) string {
+	if schema != nil && *schema != "" {
+		return *schema + "." + name
+	}
+	return name
+}
+
+func tableRef(tbl interpreter.Table, d Dialect) string {
+	return schemaRef(tbl.SchemaName, tbl.Name, d)
+}
+
+func enumRef(e interpreter.Enum, d Dialect) string {
+	return schemaRef(e.SchemaName, e.Name, d)
+}
+
+func endpointRef(ep interpreter.RefEndpoint, d Dialect) string {
+	return schemaRef(ep.SchemaName, ep.TableName, d)
 }
 
 // typeArgs extracts string args from a column type's Args field.
@@ -104,18 +128,22 @@ func typeArgs(col interpreter.Column) []string {
 	return nil
 }
 
-// findEnum looks up an enum by type name.
+// findEnum looks up an enum by type name. A schema-qualified type name
+// (`my_schema.my_enum`) matches the enum declared in that schema; a bare name
+// matches on the enum name alone.
 func findEnum(typeName string, db *interpreter.Database) *interpreter.Enum {
 	lower := strings.ToLower(typeName)
 	for i := range db.Enums {
-		if strings.ToLower(db.Enums[i].Name) == lower {
-			return &db.Enums[i]
+		e := &db.Enums[i]
+		if strings.ToLower(e.Name) == lower ||
+			strings.ToLower(qualifiedName(e.SchemaName, e.Name)) == lower {
+			return e
 		}
 	}
 	return nil
 }
 
-// mapType maps a DBML type name + args to a SQL/DBML type string.
+// mapType maps a DBML column type + args to a SQL/DBML type string.
 // Returns (sqlType, isSerial) where isSerial indicates auto-increment semantics.
 //
 // Generic mode normalises type names to canonical DBML equivalents
@@ -125,7 +153,10 @@ func findEnum(typeName string, db *interpreter.Database) *interpreter.Enum {
 // Dialect-specific modes (Postgres, MariaDB, SQLite) pass types through unchanged;
 // only SQL syntax (identifier quoting, enum expansion, auto-increment keywords,
 // etc.) is affected by the dialect.
-func mapType(typeName string, args []string, d Dialect, db *interpreter.Database) (string, bool) {
+func mapType(ct interpreter.ColumnType, args []string, d Dialect, db *interpreter.Database) (string, bool) {
+	// A schema-qualified type keeps its schema in the emitted SQL.
+	typeName := qualifiedName(ct.SchemaName, ct.TypeName)
+
 	argStr := ""
 	if len(args) > 0 {
 		argStr = "(" + strings.Join(args, ", ") + ")"
@@ -145,7 +176,7 @@ func mapType(typeName string, args []string, d Dialect, db *interpreter.Database
 			case SQLite:
 				return "TEXT", false
 			default: // Postgres: reference the named type
-				return quoteIdent(e.Name, Postgres), false
+				return enumRef(*e, Postgres), false
 			}
 		}
 		// Expand serial semantics per dialect.
@@ -260,7 +291,7 @@ func renderDefault(def *interpreter.Default, d Dialect) string {
 // inlinePK: whether to emit PRIMARY KEY inline (only for single-PK tables).
 func renderColumn(col interpreter.Column, inlinePK bool, d Dialect, db *interpreter.Database) string {
 	args := typeArgs(col)
-	sqlType, isSerialType := mapType(col.Type.TypeName, args, d, db)
+	sqlType, isSerialType := mapType(col.Type, args, d, db)
 	isAutoInc := isSerialType || (col.Increment != nil && *col.Increment)
 
 	// For Postgres with [increment]: promote to SERIAL/BIGSERIAL.
@@ -330,7 +361,7 @@ func createEnumTypePostgres(e interpreter.Enum) string {
 		vals[i] = "    '" + strings.ReplaceAll(v.Name, "'", "''") + "'"
 	}
 	return fmt.Sprintf("CREATE TYPE %s AS ENUM (\n%s\n);",
-		quoteIdent(e.Name, Postgres),
+		enumRef(e, Postgres),
 		strings.Join(vals, ",\n"),
 	)
 }
@@ -413,14 +444,8 @@ func fkConstraints(db *interpreter.Database, d Dialect) []string {
 			parentCols[i] = quoteIdent(f, d)
 		}
 
-		childTable := quoteIdent(child.TableName, d)
-		if child.SchemaName != nil && *child.SchemaName != "" && d == Postgres {
-			childTable = quoteIdent(*child.SchemaName, d) + "." + childTable
-		}
-		parentTable := quoteIdent(parent.TableName, d)
-		if parent.SchemaName != nil && *parent.SchemaName != "" && d == Postgres {
-			parentTable = quoteIdent(*parent.SchemaName, d) + "." + parentTable
-		}
+		childTable := endpointRef(child, d)
+		parentTable := endpointRef(parent, d)
 
 		result = append(result, fmt.Sprintf(
 			"ALTER TABLE %s ADD CONSTRAINT %s FOREIGN KEY (%s) REFERENCES %s (%s)%s%s;",
@@ -482,7 +507,7 @@ func insertSQL(tbl interpreter.Table, d Dialect) string {
 		cols[i] = quoteIdent(c, d)
 	}
 	header := fmt.Sprintf("INSERT INTO %s (%s) VALUES\n",
-		quoteIdent(tbl.Name, d), strings.Join(cols, ", "))
+		tableRef(tbl, d), strings.Join(cols, ", "))
 
 	sb.WriteString(header)
 	for i, row := range rec.Rows {
@@ -562,7 +587,7 @@ func Migrate(oldDB, newDB *interpreter.Database, d Dialect) string {
 	if d == Postgres {
 		oldEnums := enumMap(oldDB)
 		for _, e := range newDB.Enums {
-			if _, exists := oldEnums[e.Name]; !exists {
+			if _, exists := oldEnums[enumKey(e)]; !exists {
 				hasOutput = true
 				sb.WriteString("-- New enum type\n")
 				sb.WriteString(createEnumTypePostgres(e))
@@ -573,9 +598,9 @@ func Migrate(oldDB, newDB *interpreter.Database, d Dialect) string {
 
 	// New tables
 	for _, tbl := range newDB.Tables {
-		if _, exists := oldTables[tbl.Name]; !exists {
+		if _, exists := oldTables[tableKey(tbl)]; !exists {
 			hasOutput = true
-			sb.WriteString(fmt.Sprintf("-- New table: %s\n", tbl.Name))
+			sb.WriteString(fmt.Sprintf("-- New table: %s\n", tableKey(tbl)))
 			sb.WriteString(createTableSQL(tbl, newDB, d))
 			sb.WriteString("\n")
 		}
@@ -583,14 +608,14 @@ func Migrate(oldDB, newDB *interpreter.Database, d Dialect) string {
 
 	// Modified tables (same name, different columns)
 	for _, newTbl := range newDB.Tables {
-		oldTbl, exists := oldTables[newTbl.Name]
+		oldTbl, exists := oldTables[tableKey(newTbl)]
 		if !exists {
 			continue
 		}
 		stmts := diffTable(oldTbl, newTbl, oldDB, newDB, d)
 		if len(stmts) > 0 {
 			hasOutput = true
-			sb.WriteString(fmt.Sprintf("-- Modified table: %s\n", newTbl.Name))
+			sb.WriteString(fmt.Sprintf("-- Modified table: %s\n", tableKey(newTbl)))
 			for _, stmt := range stmts {
 				sb.WriteString(stmt + "\n")
 			}
@@ -600,10 +625,10 @@ func Migrate(oldDB, newDB *interpreter.Database, d Dialect) string {
 
 	// Removed tables
 	for _, tbl := range oldDB.Tables {
-		if _, exists := newTables[tbl.Name]; !exists {
+		if _, exists := newTables[tableKey(tbl)]; !exists {
 			hasOutput = true
-			sb.WriteString(fmt.Sprintf("-- Removed table: %s\n", tbl.Name))
-			sb.WriteString(fmt.Sprintf("DROP TABLE %s;\n\n", quoteIdent(tbl.Name, d)))
+			sb.WriteString(fmt.Sprintf("-- Removed table: %s\n", tableKey(tbl)))
+			sb.WriteString(fmt.Sprintf("DROP TABLE %s;\n\n", tableRef(tbl, d)))
 		}
 	}
 
@@ -611,10 +636,10 @@ func Migrate(oldDB, newDB *interpreter.Database, d Dialect) string {
 	if d == Postgres {
 		newEnums := enumMap(newDB)
 		for _, e := range oldDB.Enums {
-			if _, exists := newEnums[e.Name]; !exists {
+			if _, exists := newEnums[enumKey(e)]; !exists {
 				hasOutput = true
-				sb.WriteString(fmt.Sprintf("-- Removed enum type: %s\n", e.Name))
-				sb.WriteString(fmt.Sprintf("DROP TYPE %s;\n\n", quoteIdent(e.Name, d)))
+				sb.WriteString(fmt.Sprintf("-- Removed enum type: %s\n", enumKey(e)))
+				sb.WriteString(fmt.Sprintf("DROP TYPE %s;\n\n", enumRef(e, d)))
 			}
 		}
 	}
@@ -632,7 +657,7 @@ func diffTable(oldTbl, newTbl interpreter.Table, oldDB, newDB *interpreter.Datab
 
 	oldCols := colMap(oldTbl)
 	newCols := colMap(newTbl)
-	tblRef := quoteIdent(newTbl.Name, d)
+	tblRef := tableRef(newTbl, d)
 
 	// Added columns (iterate in new-schema order)
 	for _, col := range newTbl.Fields {
@@ -663,8 +688,8 @@ func diffTable(oldTbl, newTbl interpreter.Table, oldDB, newDB *interpreter.Datab
 			continue
 		}
 
-		oldSQL, _ := mapType(oldCol.Type.TypeName, typeArgs(oldCol), d, oldDB)
-		newSQL, _ := mapType(newCol.Type.TypeName, typeArgs(newCol), d, newDB)
+		oldSQL, _ := mapType(oldCol.Type, typeArgs(oldCol), d, oldDB)
+		newSQL, _ := mapType(newCol.Type, typeArgs(newCol), d, newDB)
 		typeChanged := oldSQL != newSQL
 		// When either schema is normalized, compare via normalizeForDiff
 		// so that equivalent types with different names or serial semantics
@@ -692,7 +717,7 @@ func diffTable(oldTbl, newTbl interpreter.Table, oldDB, newDB *interpreter.Datab
 			case SQLite:
 				stmts = append(stmts, fmt.Sprintf(
 					"-- SQLite: cannot ALTER COLUMN type for %s.%s (requires table rebuild)",
-					newTbl.Name, newCol.Name))
+					tableKey(newTbl), newCol.Name))
 			}
 		} else if nullChanged {
 			switch d {
@@ -713,7 +738,7 @@ func diffTable(oldTbl, newTbl interpreter.Table, oldDB, newDB *interpreter.Datab
 			case SQLite:
 				stmts = append(stmts, fmt.Sprintf(
 					"-- SQLite: cannot modify NOT NULL for %s.%s (requires table rebuild)",
-					newTbl.Name, newCol.Name))
+					tableKey(newTbl), newCol.Name))
 			}
 		}
 	}
@@ -726,7 +751,7 @@ func diffTable(oldTbl, newTbl interpreter.Table, oldDB, newDB *interpreter.Datab
 // blob→binary) and folds serial/bigserial down to their base types (int/bigint)
 // so that "serial" and "int [increment]" compare as equal.
 func normalizeForDiff(col interpreter.Column, db *interpreter.Database) string {
-	generic, isSerial := mapType(col.Type.TypeName, typeArgs(col), Generic, db)
+	generic, isSerial := mapType(col.Type, typeArgs(col), Generic, db)
 	if isSerial {
 		// serial → int, bigserial → bigint
 		switch generic {
@@ -739,10 +764,28 @@ func normalizeForDiff(col interpreter.Column, db *interpreter.Database) string {
 	return generic
 }
 
+// tableKey returns the schema-qualified table name used to match tables
+// across two schemas, so that tables with the same name in different schemas
+// are not confused.
+func tableKey(t interpreter.Table) string {
+	return qualifiedName(t.SchemaName, t.Name)
+}
+
+// endpointKey returns the schema-qualified table name of a ref endpoint.
+func endpointKey(ep interpreter.RefEndpoint) string {
+	return qualifiedName(ep.SchemaName, ep.TableName)
+}
+
+// enumKey returns the schema-qualified enum name used to match enums across
+// two schemas.
+func enumKey(e interpreter.Enum) string {
+	return qualifiedName(e.SchemaName, e.Name)
+}
+
 func tableMap(db *interpreter.Database) map[string]interpreter.Table {
 	m := make(map[string]interpreter.Table, len(db.Tables))
 	for _, t := range db.Tables {
-		m[t.Name] = t
+		m[tableKey(t)] = t
 	}
 	return m
 }
@@ -750,7 +793,7 @@ func tableMap(db *interpreter.Database) map[string]interpreter.Table {
 func enumMap(db *interpreter.Database) map[string]interpreter.Enum {
 	m := make(map[string]interpreter.Enum, len(db.Enums))
 	for _, e := range db.Enums {
-		m[e.Name] = e
+		m[enumKey(e)] = e
 	}
 	return m
 }

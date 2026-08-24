@@ -164,7 +164,9 @@ determined by the `database_type` Project setting in the file. Foreign keys are
 emitted as `ALTER TABLE ... ADD CONSTRAINT` statements, carrying the `delete:`
 and `update:` referential actions from the `Ref` declaration. If the DBML
 contains `records` blocks (from `todbml --data`), matching `INSERT INTO`
-statements are generated after each table.
+statements are generated after each table. A schema-qualified name such as
+`Table my_schema.my_table` is emitted as two quoted identifiers, so the table
+is created in `my_schema` rather than as a table with a dot in its name.
 
 ```sh
 dbml-tools tosql schema.dbml
