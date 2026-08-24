@@ -90,6 +90,8 @@ type Ref struct {
 	Name       *string       `json:"name"`
 	SchemaName *string       `json:"schemaName"`
 	Endpoints  []RefEndpoint `json:"endpoints"`
+	OnDelete   *string       `json:"onDelete,omitempty"`
+	OnUpdate   *string       `json:"onUpdate,omitempty"`
 }
 
 type RefEndpoint struct {
@@ -412,9 +414,13 @@ func (interp *Interpreter) interpretRef(db *Database, decl *parser.ElementDeclNo
 func (interp *Interpreter) extractRefFromExpr(expr parser.Node, decl *parser.ElementDeclNode) *Ref {
 	infix, ok := expr.(*parser.InfixExprNode)
 	if !ok {
-		// Try FuncAppNode that wraps an infix
+		// Try FuncAppNode that wraps an infix, carrying the [...] settings
 		if fa, ok := expr.(*parser.FuncAppNode); ok {
-			return interp.extractRefFromExpr(fa.Callee, decl)
+			ref := interp.extractRefFromExpr(fa.Callee, decl)
+			if ref != nil {
+				applyRefSettings(ref, fa.Args)
+			}
+			return ref
 		}
 		return nil
 	}
@@ -449,6 +455,39 @@ func (interp *Interpreter) extractRefFromExpr(expr parser.Node, decl *parser.Ele
 	}
 }
 
+// applyRefSettings reads the `delete:` and `update:` referential actions from
+// the [...] settings list of a Ref declaration.
+func applyRefSettings(ref *Ref, args []parser.Node) {
+	for _, arg := range args {
+		list, ok := arg.(*parser.ListExprNode)
+		if !ok {
+			continue
+		}
+		for _, item := range list.Items {
+			attr, ok := item.(*parser.AttributeNode)
+			if !ok || attr.Value == nil {
+				continue
+			}
+			action := normaliseRefAction(extractName(attr.Value))
+			if action == "" {
+				continue
+			}
+			switch strings.ToLower(extractAttrName(attr)) {
+			case "delete":
+				ref.OnDelete = &action
+			case "update":
+				ref.OnUpdate = &action
+			}
+		}
+	}
+}
+
+// normaliseRefAction canonicalises a referential action to the lowercase,
+// single-spaced DBML spelling (e.g. `SET  NULL` -> `set null`).
+func normaliseRefAction(v string) string {
+	return strings.ToLower(strings.Join(strings.Fields(v), " "))
+}
+
 func extractEndpoint(n parser.Node, relation string) RefEndpoint {
 	ep := RefEndpoint{
 		Relation:   relation,
@@ -468,7 +507,15 @@ func extractEndpoint(n parser.Node, relation string) RefEndpoint {
 		} else {
 			ep.TableName = extractName(infix.Left)
 		}
-		ep.FieldNames = []string{extractName(infix.Right)}
+		if tup, ok := infix.Right.(*parser.TupleExprNode); ok {
+			// composite endpoint: table.(col1, col2)
+			ep.FieldNames = make([]string, 0, len(tup.Items))
+			for _, item := range tup.Items {
+				ep.FieldNames = append(ep.FieldNames, extractName(item))
+			}
+		} else {
+			ep.FieldNames = []string{extractName(infix.Right)}
+		}
 	} else {
 		ep.TableName = extractName(n)
 		ep.FieldNames = []string{}

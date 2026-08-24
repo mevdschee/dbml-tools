@@ -348,3 +348,67 @@ func TestDumpMariaDBColumnCommentRoundtrip(t *testing.T) {
 		t.Error("MariaDB should use inline COMMENT, not COMMENT ON")
 	}
 }
+
+func TestForeignKeyActions(t *testing.T) {
+	src := `Project "p" {
+  database_type: 'MariaDB'
+}
+
+Table a {
+  id bigint [pk]
+  b_id bigint
+  c_id bigint
+  d_id bigint
+}
+
+Table b { id bigint [pk] }
+Table c { id bigint [pk] }
+Table d { id bigint [pk] }
+
+Ref: a.b_id > b.id [delete: set null, update: cascade]
+Ref: a.c_id > c.id [delete: cascade]
+Ref: a.d_id > d.id [delete: no action]
+`
+	got := Dump(parseDBML(src), MariaDB)
+
+	want := []string{
+		"FOREIGN KEY (`b_id`) REFERENCES `b` (`id`) ON DELETE SET NULL ON UPDATE CASCADE;",
+		"FOREIGN KEY (`c_id`) REFERENCES `c` (`id`) ON DELETE CASCADE;",
+		// NO ACTION is the SQL default and is left implicit.
+		"FOREIGN KEY (`d_id`) REFERENCES `d` (`id`);",
+	}
+	for _, w := range want {
+		if !strings.Contains(got, w) {
+			t.Errorf("missing %q in:\n%s", w, got)
+		}
+	}
+}
+
+func TestCompositeAndBlockForeignKeys(t *testing.T) {
+	src := `Table a {
+  x int
+  y int
+}
+
+Table b {
+  p int
+  q int
+}
+
+Ref {
+  b.(p, q) > a.(x, y) [delete: cascade]
+  b.p > a.x
+}
+`
+	got := Dump(parseDBML(src), Postgres)
+
+	want := []string{
+		`FOREIGN KEY ("p", "q") REFERENCES "a" ("x", "y") ON DELETE CASCADE;`,
+		`FOREIGN KEY ("p") REFERENCES "a" ("x");`,
+	}
+	for _, w := range want {
+		if !strings.Contains(got, w) {
+			t.Errorf("missing %q in:\n%s", w, got)
+		}
+	}
+}

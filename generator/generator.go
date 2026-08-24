@@ -423,15 +423,30 @@ func fkConstraints(db *interpreter.Database, d Dialect) []string {
 		}
 
 		result = append(result, fmt.Sprintf(
-			"ALTER TABLE %s ADD CONSTRAINT %s FOREIGN KEY (%s) REFERENCES %s (%s);",
+			"ALTER TABLE %s ADD CONSTRAINT %s FOREIGN KEY (%s) REFERENCES %s (%s)%s%s;",
 			childTable,
 			quoteIdent(constraintName, d),
 			strings.Join(childCols, ", "),
 			parentTable,
 			strings.Join(parentCols, ", "),
+			refAction("ON DELETE", ref.OnDelete),
+			refAction("ON UPDATE", ref.OnUpdate),
 		))
 	}
 	return result
+}
+
+// refAction renders a referential action clause (e.g. " ON DELETE SET NULL").
+// Unset actions and the SQL default NO ACTION produce no clause.
+func refAction(clause string, action *string) string {
+	if action == nil {
+		return ""
+	}
+	a := strings.ToUpper(strings.Join(strings.Fields(*action), " "))
+	if a == "" || a == "NO ACTION" {
+		return ""
+	}
+	return " " + clause + " " + a
 }
 
 // commentStatements generates COMMENT ON TABLE/COLUMN statements for PostgreSQL.

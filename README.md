@@ -160,7 +160,9 @@ dbml-tools check schema.dbml
 ### tosql
 
 Generates a `CREATE TABLE` SQL script from a DBML file. The SQL dialect is
-determined by the `database_type` Project setting in the file. If the DBML
+determined by the `database_type` Project setting in the file. Foreign keys are
+emitted as `ALTER TABLE ... ADD CONSTRAINT` statements, carrying the `delete:`
+and `update:` referential actions from the `Ref` declaration. If the DBML
 contains `records` blocks (from `todbml --data`), matching `INSERT INTO`
 statements are generated after each table.
 

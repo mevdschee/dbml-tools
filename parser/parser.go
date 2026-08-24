@@ -447,8 +447,9 @@ var validDeclKeywords = map[string]bool{
 }
 
 // declRequiresName lists keywords whose BNF rule mandates a name.
+// Project is absent on purpose: the grammar makes its name optional.
 var declRequiresName = map[string]bool{
-	"Table": true, "Enum": true, "Project": true,
+	"Table": true, "Enum": true,
 	"TableGroup": true, "TablePartial": true,
 }
 
@@ -515,7 +516,11 @@ func (p *Parser) parseDeclaration() Node {
 
 	// body: block or colon-expression
 	if p.cur().Kind == lexer.KindLBrace {
-		body = p.parseBlockExpr()
+		if typeToken.Value == "Ref" {
+			body = p.parseBlockExpr(p.parseColonBody)
+		} else {
+			body = p.parseBlockExpr(nil)
+		}
 	} else if p.cur().Kind == lexer.KindColon && !p.hasNewlineBefore() {
 		c := p.consume()
 		colon = &c
@@ -555,17 +560,26 @@ func (p *Parser) parseDeclaration() Node {
 // Block expression { ... }
 // ---------------------------------------------------------------------------
 
-func (p *Parser) parseBlockExpr() *BlockExprNode {
+// parseBlockExpr parses a { ... } body. itemParser parses a single body item;
+// pass nil for the default function-application form. Ref blocks pass
+// parseColonBody so their lines become proper relationship trees.
+func (p *Parser) parseBlockExpr(itemParser func() Node) *BlockExprNode {
 	open := p.expect(lexer.KindLBrace)
 	var body []Node
 	for p.cur().Kind != lexer.KindRBrace && p.cur().Kind != lexer.KindEOF {
 		// Nested brace block (e.g. records/indexes body inside a table block):
 		// consume it as a sub-block so the inner } doesn't close the outer block.
+		// Nested blocks always use the default item parser.
 		if p.cur().Kind == lexer.KindLBrace {
-			body = append(body, p.parseBlockExpr())
+			body = append(body, p.parseBlockExpr(nil))
 			continue
 		}
-		item := p.parseFuncApp()
+		var item Node
+		if itemParser != nil {
+			item = itemParser()
+		} else {
+			item = p.parseFuncApp()
+		}
 		if item != nil {
 			body = append(body, item)
 		}
@@ -678,7 +692,13 @@ func (p *Parser) parseDotExpr() Node {
 	left := p.parsePrimaryExpr()
 	for p.cur().Kind == lexer.KindOp && p.cur().Value == "." && !p.hasNewlineBefore() {
 		op := p.consume()
-		right := p.parsePrimaryExpr()
+		var right Node
+		if p.cur().Kind == lexer.KindLParen {
+			// Composite ref endpoint: table.(col1, col2)
+			right = p.parseTupleExpr()
+		} else {
+			right = p.parsePrimaryExpr()
+		}
 		left = &InfixExprNode{Left: left, Op: op, Right: right}
 	}
 	return left
@@ -772,7 +792,7 @@ func (p *Parser) parseAttrValue() Node {
 		tok := p.consume()
 		return &PrimaryExprNode{Expr: &LiteralNode{Token: tok}}
 	case lexer.KindIdentifier:
-		return p.parseDotExpr()
+		return p.parseIdentAttrValue()
 	case lexer.KindOp:
 		// e.g. [ref: > table.col]
 		op := p.consume()
@@ -785,6 +805,24 @@ func (p *Parser) parseAttrValue() Node {
 		tok := p.consume()
 		return &PrimaryExprNode{Expr: &VariableNode{Token: tok}}
 	}
+}
+
+// parseIdentAttrValue parses an identifier-valued attribute. Multi-word values
+// such as `set null`, `set default` and `no action` are written unquoted in
+// DBML, so consecutive identifiers are gathered into a single value.
+func (p *Parser) parseIdentAttrValue() Node {
+	first := p.parseDotExpr()
+	if _, ok := first.(*PrimaryExprNode); !ok {
+		return first // dotted (e.g. table.column); not a multi-word value
+	}
+	idents := []lexer.Token{first.FirstToken()}
+	for p.cur().Kind == lexer.KindIdentifier && !p.hasNewlineBefore() {
+		idents = append(idents, p.consume())
+	}
+	if len(idents) == 1 {
+		return first
+	}
+	return &IdentStreamNode{Tokens: idents}
 }
 
 // ---------------------------------------------------------------------------

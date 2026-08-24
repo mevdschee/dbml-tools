@@ -109,10 +109,67 @@ Ref: orders.user_id > u.id`
 }
 
 func TestResolveRefs_CompositeTuple(t *testing.T) {
-	// Composite tuple refs (a.(x, y) > b.(x, y)) are in the DBML grammar
-	// but not currently supported by the parser. When/if the parser learns
-	// to handle them, this test should be unskipped.
-	t.Skip("parser does not yet support composite tuple ref endpoints")
+	src := `Table a {
+  x int
+  y int
+}
+Table b {
+  p int
+  q int
+}
+Ref: b.(p, q) > a.(x, y)`
+	a := Analyze(src)
+
+	if got := countRefs(a, RefSiteTable); got != 2 {
+		t.Errorf("table refs: got %d, want 2", got)
+	}
+	if got := countRefs(a, RefSiteColumn); got != 4 {
+		t.Errorf("column refs: got %d, want 4", got)
+	}
+	for _, name := range []string{"p", "q", "x", "y"} {
+		r := findRef(a, RefSiteColumn, name)
+		if r == nil {
+			t.Errorf("no column ref site for %q", name)
+			continue
+		}
+		if r.Target == nil {
+			t.Errorf("column %q did not resolve", name)
+		}
+	}
+}
+
+func TestResolveRefs_CompositeTupleInBlock(t *testing.T) {
+	src := `Table a {
+  x int
+  y int
+}
+Table b {
+  p int
+  q int
+}
+Ref {
+  b.(p, q) > a.(x, y)
+}`
+	a := Analyze(src)
+	if got := countRefs(a, RefSiteColumn); got != 4 {
+		t.Errorf("column refs in block: got %d, want 4", got)
+	}
+}
+
+func TestResolveRefs_BlockFormWithSettings(t *testing.T) {
+	// The [...] settings must not be mistaken for part of the endpoint.
+	src := `Table u { id int }
+Table o { u_id int }
+Ref {
+  o.u_id > u.id [delete: set null]
+}`
+	a := Analyze(src)
+	if got := countRefs(a, RefSiteColumn); got != 2 {
+		t.Errorf("column refs: got %d, want 2", got)
+	}
+	if r := findRef(a, RefSiteColumn, "null"); r != nil {
+		t.Error("setting value \"null\" was treated as a ref site")
+	}
 }
 
 func TestResolveRefs_InlineRef(t *testing.T) {
@@ -202,5 +259,21 @@ Ref: orders.user_id > users.id`
 	}
 	if r.SourceText != "user_id" {
 		t.Errorf("got %q", r.SourceText)
+	}
+}
+
+func TestDefinition_BlockFormRef(t *testing.T) {
+	src := `Table users { id int }
+Table orders { uid int }
+Ref {
+  orders.uid > us▮ers.id
+}`
+	a, off := analyzeWithCursor(t, src)
+	def := a.Definition(off)
+	if def == nil {
+		t.Fatal("no definition for table in block-form ref")
+	}
+	if got := sub(a.Source, *def); got != "users" {
+		t.Errorf("def range covers %q", got)
 	}
 }
