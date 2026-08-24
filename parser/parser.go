@@ -516,7 +516,11 @@ func (p *Parser) parseDeclaration() Node {
 
 	// body: block or colon-expression
 	if p.cur().Kind == lexer.KindLBrace {
-		body = p.parseBlockExpr()
+		if typeToken.Value == "Ref" {
+			body = p.parseBlockExpr(p.parseColonBody)
+		} else {
+			body = p.parseBlockExpr(nil)
+		}
 	} else if p.cur().Kind == lexer.KindColon && !p.hasNewlineBefore() {
 		c := p.consume()
 		colon = &c
@@ -556,17 +560,26 @@ func (p *Parser) parseDeclaration() Node {
 // Block expression { ... }
 // ---------------------------------------------------------------------------
 
-func (p *Parser) parseBlockExpr() *BlockExprNode {
+// parseBlockExpr parses a { ... } body. itemParser parses a single body item;
+// pass nil for the default function-application form. Ref blocks pass
+// parseColonBody so their lines become proper relationship trees.
+func (p *Parser) parseBlockExpr(itemParser func() Node) *BlockExprNode {
 	open := p.expect(lexer.KindLBrace)
 	var body []Node
 	for p.cur().Kind != lexer.KindRBrace && p.cur().Kind != lexer.KindEOF {
 		// Nested brace block (e.g. records/indexes body inside a table block):
 		// consume it as a sub-block so the inner } doesn't close the outer block.
+		// Nested blocks always use the default item parser.
 		if p.cur().Kind == lexer.KindLBrace {
-			body = append(body, p.parseBlockExpr())
+			body = append(body, p.parseBlockExpr(nil))
 			continue
 		}
-		item := p.parseFuncApp()
+		var item Node
+		if itemParser != nil {
+			item = itemParser()
+		} else {
+			item = p.parseFuncApp()
+		}
 		if item != nil {
 			body = append(body, item)
 		}
@@ -679,7 +692,13 @@ func (p *Parser) parseDotExpr() Node {
 	left := p.parsePrimaryExpr()
 	for p.cur().Kind == lexer.KindOp && p.cur().Value == "." && !p.hasNewlineBefore() {
 		op := p.consume()
-		right := p.parsePrimaryExpr()
+		var right Node
+		if p.cur().Kind == lexer.KindLParen {
+			// Composite ref endpoint: table.(col1, col2)
+			right = p.parseTupleExpr()
+		} else {
+			right = p.parsePrimaryExpr()
+		}
 		left = &InfixExprNode{Left: left, Op: op, Right: right}
 	}
 	return left

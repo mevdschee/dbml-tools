@@ -433,3 +433,84 @@ func TestParseInlineRefKeepsDotValue(t *testing.T) {
 		t.Fatalf("unexpected errors: %v", errs)
 	}
 }
+
+// refExpr digs the relationship tree out of a Ref declaration body, which is
+// either a bare expression (colon form) or one line of a block.
+func refExpr(t *testing.T, prog *ProgramNode) *InfixExprNode {
+	t.Helper()
+	decl := prog.Body[0].(*ElementDeclNode)
+	body := decl.Body
+	if blk, ok := body.(*BlockExprNode); ok {
+		if len(blk.Body) != 1 {
+			t.Fatalf("expected 1 ref line, got %d", len(blk.Body))
+		}
+		body = blk.Body[0]
+	}
+	if fa, ok := body.(*FuncAppNode); ok {
+		body = fa.Callee // settings wrapper
+	}
+	infix, ok := body.(*InfixExprNode)
+	if !ok {
+		t.Fatalf("expected InfixExprNode, got %T", body)
+	}
+	return infix
+}
+
+func TestParseBlockRefBuildsTree(t *testing.T) {
+	prog, errs := parse("Ref {\n  a.b_id > b.id\n}\n")
+	if len(errs) > 0 {
+		t.Fatalf("unexpected errors: %v", errs)
+	}
+	if got := refExpr(t, prog).Op.Value; got != ">" {
+		t.Errorf("expected relation '>', got %q", got)
+	}
+}
+
+func TestParseBlockRefWithSettings(t *testing.T) {
+	prog, errs := parse("Ref {\n  a.b_id > b.id [delete: set null]\n  a.c_id > c.id\n}\n")
+	if len(errs) > 0 {
+		t.Fatalf("unexpected errors: %v", errs)
+	}
+	blk := prog.Body[0].(*ElementDeclNode).Body.(*BlockExprNode)
+	if len(blk.Body) != 2 {
+		t.Fatalf("expected 2 ref lines, got %d", len(blk.Body))
+	}
+	if _, ok := blk.Body[0].(*FuncAppNode); !ok {
+		t.Errorf("expected settings-carrying FuncAppNode, got %T", blk.Body[0])
+	}
+}
+
+func TestParseCompositeRefEndpoint(t *testing.T) {
+	for _, src := range []string{
+		"Ref: a.(x, y) > b.(p, q)\n",
+		"Ref {\n  a.(x, y) > b.(p, q)\n}\n",
+	} {
+		prog, errs := parse(src)
+		if len(errs) > 0 {
+			t.Fatalf("parse(%q): unexpected errors: %v", src, errs)
+		}
+		infix := refExpr(t, prog)
+		for _, side := range []Node{infix.Left, infix.Right} {
+			ep := side.(*InfixExprNode)
+			tup, ok := ep.Right.(*TupleExprNode)
+			if !ok {
+				t.Fatalf("expected TupleExprNode endpoint, got %T", ep.Right)
+			}
+			if len(tup.Items) != 2 {
+				t.Errorf("expected 2 columns, got %d", len(tup.Items))
+			}
+		}
+	}
+}
+
+func TestParseTableBlockStillFuncApp(t *testing.T) {
+	// Only Ref blocks change; table bodies keep the function-application form.
+	prog, errs := parse("Table t {\n  id integer [pk]\n  indexes {\n    (id) [name: 'i']\n  }\n}\n")
+	if len(errs) > 0 {
+		t.Fatalf("unexpected errors: %v", errs)
+	}
+	blk := prog.Body[0].(*ElementDeclNode).Body.(*BlockExprNode)
+	if _, ok := blk.Body[0].(*FuncAppNode); !ok {
+		t.Errorf("expected column as FuncAppNode, got %T", blk.Body[0])
+	}
+}

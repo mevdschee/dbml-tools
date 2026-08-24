@@ -383,3 +383,32 @@ Ref: a.d_id > d.id [delete: no action]
 		}
 	}
 }
+
+func TestCompositeAndBlockForeignKeys(t *testing.T) {
+	src := `Table a {
+  x int
+  y int
+}
+
+Table b {
+  p int
+  q int
+}
+
+Ref {
+  b.(p, q) > a.(x, y) [delete: cascade]
+  b.p > a.x
+}
+`
+	got := Dump(parseDBML(src), Postgres)
+
+	want := []string{
+		`FOREIGN KEY ("p", "q") REFERENCES "a" ("x", "y") ON DELETE CASCADE;`,
+		`FOREIGN KEY ("p") REFERENCES "a" ("x");`,
+	}
+	for _, w := range want {
+		if !strings.Contains(got, w) {
+			t.Errorf("missing %q in:\n%s", w, got)
+		}
+	}
+}

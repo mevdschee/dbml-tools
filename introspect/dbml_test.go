@@ -36,6 +36,12 @@ func roundTripSchema() *DBSchema {
 				RefTable: "mailbox", RefColumns: []string{"id"},
 				OnDelete: "NO ACTION",
 			},
+			{
+				// Multi-column FKs are emitted as table.(col, col) endpoints.
+				TableName: "customer", Columns: []string{"id", "owner_id"},
+				RefTable: "mailbox", RefColumns: []string{"id", "tenant_id"},
+				OnDelete: "CASCADE",
+			},
 		},
 	}
 }
@@ -55,8 +61,8 @@ func TestGeneratedDBMLParses(t *testing.T) {
 	if len(interp.Errors) > 0 {
 		t.Fatalf("generated DBML does not interpret: %v\n%s", interp.Errors, dbml)
 	}
-	if len(db.Refs) != 2 {
-		t.Fatalf("expected 2 refs, got %d", len(db.Refs))
+	if len(db.Refs) != 3 {
+		t.Fatalf("expected 3 refs, got %d", len(db.Refs))
 	}
 }
 
@@ -68,8 +74,13 @@ func TestGeneratedDBMLKeepsRefActions(t *testing.T) {
 	db := interpreter.New().Interpret(p.Parse())
 	sql := generator.Dump(db, generator.MariaDB)
 
-	want := "FOREIGN KEY (`default_mailbox_id`) REFERENCES `mailbox` (`id`) ON DELETE SET NULL ON UPDATE CASCADE;"
-	if !strings.Contains(sql, want) {
-		t.Errorf("actions lost in round trip; missing %q in:\n%s", want, sql)
+	want := []string{
+		"FOREIGN KEY (`default_mailbox_id`) REFERENCES `mailbox` (`id`) ON DELETE SET NULL ON UPDATE CASCADE;",
+		"FOREIGN KEY (`id`, `owner_id`) REFERENCES `mailbox` (`id`, `tenant_id`) ON DELETE CASCADE;",
+	}
+	for _, w := range want {
+		if !strings.Contains(sql, w) {
+			t.Errorf("lost in round trip; missing %q in:\n%s", w, sql)
+		}
 	}
 }

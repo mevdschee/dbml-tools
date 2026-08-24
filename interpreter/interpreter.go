@@ -507,7 +507,15 @@ func extractEndpoint(n parser.Node, relation string) RefEndpoint {
 		} else {
 			ep.TableName = extractName(infix.Left)
 		}
-		ep.FieldNames = []string{extractName(infix.Right)}
+		if tup, ok := infix.Right.(*parser.TupleExprNode); ok {
+			// composite endpoint: table.(col1, col2)
+			ep.FieldNames = make([]string, 0, len(tup.Items))
+			for _, item := range tup.Items {
+				ep.FieldNames = append(ep.FieldNames, extractName(item))
+			}
+		} else {
+			ep.FieldNames = []string{extractName(infix.Right)}
+		}
 	} else {
 		ep.TableName = extractName(n)
 		ep.FieldNames = []string{}

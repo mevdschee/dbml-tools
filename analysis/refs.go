@@ -73,17 +73,14 @@ func collectRefDecl(out []ResolvedRef, decl *parser.ElementDeclNode, idx *Symbol
 	if decl.Body == nil {
 		return out
 	}
-	// Block form: each body item is its own ref expression. Parser does NOT
-	// build proper InfixExpr trees here — it produces flat FuncAppNode with
-	// the dotted/related tokens as args. We re-parse the flat sequence.
+	// Block form: each body item is its own ref expression. Both forms are
+	// parsed by parseColonBody, so both carry a proper InfixExpr tree.
 	if blk, ok := decl.Body.(*parser.BlockExprNode); ok {
 		for _, item := range blk.Body {
-			out = collectFlatRefExpr(out, item, idx)
+			out = collectRefExpr(out, item, idx)
 		}
 		return out
 	}
-	// Colon form: parser uses parseColonBody which DOES build a proper
-	// InfixExpr tree, so the structured walker works.
 	return collectRefExpr(out, decl.Body, idx)
 }
 
@@ -108,7 +105,7 @@ func collectRefExpr(out []ResolvedRef, n parser.Node, idx *SymbolIndex) []Resolv
 }
 
 // ---------------------------------------------------------------------------
-// Flat ref expression (block-form bodies, FuncAppNode with token-stream args)
+// Token-stream flattening (used by completion to inspect partial expressions)
 // ---------------------------------------------------------------------------
 
 // refAtom is a piece of a flat ref expression after flattening: either an
@@ -120,19 +117,6 @@ type refAtom struct {
 
 func (a refAtom) isOp(v string) bool {
 	return a.tuple == nil && a.tok.Kind == lexer.KindOp && a.tok.Value == v
-}
-func (a refAtom) isRelOp() bool {
-	if a.tuple != nil {
-		return false
-	}
-	if a.tok.Kind != lexer.KindOp {
-		return false
-	}
-	switch a.tok.Value {
-	case ">", "<", "-", "<>":
-		return true
-	}
-	return false
 }
 func (a refAtom) isIdent() bool {
 	return a.tuple == nil &&
@@ -168,104 +152,6 @@ func flatten(n parser.Node) []refAtom {
 		}
 	}
 	rec(n)
-	return out
-}
-
-func collectFlatRefExpr(out []ResolvedRef, n parser.Node, idx *SymbolIndex) []ResolvedRef {
-	atoms := flatten(n)
-	// Find the relop split.
-	relIdx := -1
-	for i, a := range atoms {
-		if a.isRelOp() {
-			relIdx = i
-			break
-		}
-	}
-	if relIdx < 0 {
-		return out
-	}
-	out = collectFlatEndpoint(out, atoms[:relIdx], idx)
-	// Right side may have trailing settings: stop at the first non-dot/ident/tuple atom.
-	right := atoms[relIdx+1:]
-	end := len(right)
-	for i, a := range right {
-		if !(a.isIdent() || a.isOp(".") || a.tuple != nil) {
-			end = i
-			break
-		}
-	}
-	out = collectFlatEndpoint(out, right[:end], idx)
-	return out
-}
-
-// collectFlatEndpoint takes a sequence like [ident, ., ident] or [ident, ., tuple]
-// or [ident, ., ident, ., ident] (schema-qualified) and emits ref sites.
-func collectFlatEndpoint(out []ResolvedRef, atoms []refAtom, idx *SymbolIndex) []ResolvedRef {
-	// Split on `.` ops.
-	var groups [][]refAtom
-	var cur []refAtom
-	for _, a := range atoms {
-		if a.isOp(".") {
-			if len(cur) > 0 {
-				groups = append(groups, cur)
-				cur = nil
-			}
-			continue
-		}
-		cur = append(cur, a)
-	}
-	if len(cur) > 0 {
-		groups = append(groups, cur)
-	}
-	if len(groups) == 0 {
-		return out
-	}
-	// Last group is the column part (ident OR tuple of idents).
-	// Everything before it is table-qualifier (1 or 2 idents).
-	colGroup := groups[len(groups)-1]
-	tableGroups := groups[:len(groups)-1]
-
-	var tableName string
-	var tableSym *Symbol
-	if len(tableGroups) == 0 {
-		// Bare table reference (rare in block form).
-		if len(colGroup) == 1 && colGroup[0].isIdent() {
-			tableName = colGroup[0].tok.Value
-			out = appendTableSite(out, tableName, tokenRange(colGroup[0].tok), idx)
-			return out
-		}
-		return out
-	}
-	// Use the last table-qualifier group as the actual table name. (schema is ignored for resolution.)
-	tg := tableGroups[len(tableGroups)-1]
-	if len(tg) == 1 && tg[0].isIdent() {
-		tableName = tg[0].tok.Value
-		out = appendTableSite(out, tableName, tokenRange(tg[0].tok), idx)
-		tableSym = idx.ResolveTable(tableName)
-	}
-
-	// Column part — may be a single ident or a tuple of idents.
-	if len(colGroup) == 1 && colGroup[0].tuple != nil {
-		for _, item := range colGroup[0].tuple.Items {
-			colName, colRange := extractDeclName(item)
-			out = append(out, ResolvedRef{
-				Kind:            RefSiteColumn,
-				SiteRange:       colRange,
-				SourceText:      colName,
-				Target:          colSymbol(tableSym, colName, idx),
-				ParentTableHint: tableName,
-			})
-		}
-	} else if len(colGroup) == 1 && colGroup[0].isIdent() {
-		colName := colGroup[0].tok.Value
-		out = append(out, ResolvedRef{
-			Kind:            RefSiteColumn,
-			SiteRange:       tokenRange(colGroup[0].tok),
-			SourceText:      colName,
-			Target:          colSymbol(tableSym, colName, idx),
-			ParentTableHint: tableName,
-		})
-	}
 	return out
 }
 

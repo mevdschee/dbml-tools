@@ -1,6 +1,7 @@
 package interpreter
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/mevdschee/dbml-tools/lexer"
@@ -306,6 +307,7 @@ func TestInterpretRefActions(t *testing.T) {
 		{"mixed case", "Ref: a.b_id > b.id [delete: CASCADE]\n", "cascade", ""},
 		{"none", "Ref: a.b_id > b.id\n", "", ""},
 		{"named ref", "Ref fk_a_b: a.b_id > b.id [update: restrict]\n", "", "restrict"},
+		{"block form", "Ref {\n  a.b_id > b.id [delete: set default]\n}\n", "set default", ""},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -332,4 +334,58 @@ func derefOr(s *string) string {
 		return ""
 	}
 	return *s
+}
+
+func TestInterpretBlockRefs(t *testing.T) {
+	db, errs := interpret("Ref {\n  a.b_id > b.id\n  a.c_id > c.id\n}\n")
+	if len(errs) > 0 {
+		t.Fatalf("unexpected errors: %v", errs)
+	}
+	if len(db.Refs) != 2 {
+		t.Fatalf("expected 2 refs from block body, got %d", len(db.Refs))
+	}
+	for i, want := range []string{"b_id", "c_id"} {
+		if got := db.Refs[i].Endpoints[0].FieldNames[0]; got != want {
+			t.Errorf("ref %d: expected field %q, got %q", i, want, got)
+		}
+	}
+}
+
+func TestInterpretCompositeRef(t *testing.T) {
+	for _, src := range []string{
+		"Ref: a.(x, y) > b.(p, q)\n",
+		"Ref {\n  a.(x, y) > b.(p, q)\n}\n",
+	} {
+		db, errs := interpret(src)
+		if len(errs) > 0 {
+			t.Fatalf("interpret(%q): unexpected errors: %v", src, errs)
+		}
+		if len(db.Refs) != 1 {
+			t.Fatalf("interpret(%q): expected 1 ref, got %d", src, len(db.Refs))
+		}
+		eps := db.Refs[0].Endpoints
+		if got := strings.Join(eps[0].FieldNames, ","); got != "x,y" {
+			t.Errorf("left fields: expected \"x,y\", got %q", got)
+		}
+		if got := strings.Join(eps[1].FieldNames, ","); got != "p,q" {
+			t.Errorf("right fields: expected \"p,q\", got %q", got)
+		}
+	}
+}
+
+func TestInterpretSchemaQualifiedCompositeRef(t *testing.T) {
+	db, errs := interpret("Ref: s.a.(x, y) > s.b.(p, q)\n")
+	if len(errs) > 0 {
+		t.Fatalf("unexpected errors: %v", errs)
+	}
+	ep := db.Refs[0].Endpoints[0]
+	if ep.SchemaName == nil || *ep.SchemaName != "s" {
+		t.Errorf("expected schema \"s\", got %v", ep.SchemaName)
+	}
+	if ep.TableName != "a" {
+		t.Errorf("expected table \"a\", got %q", ep.TableName)
+	}
+	if got := strings.Join(ep.FieldNames, ","); got != "x,y" {
+		t.Errorf("expected fields \"x,y\", got %q", got)
+	}
 }
