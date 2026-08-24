@@ -447,8 +447,9 @@ var validDeclKeywords = map[string]bool{
 }
 
 // declRequiresName lists keywords whose BNF rule mandates a name.
+// Project is absent on purpose: the grammar makes its name optional.
 var declRequiresName = map[string]bool{
-	"Table": true, "Enum": true, "Project": true,
+	"Table": true, "Enum": true,
 	"TableGroup": true, "TablePartial": true,
 }
 
@@ -772,7 +773,7 @@ func (p *Parser) parseAttrValue() Node {
 		tok := p.consume()
 		return &PrimaryExprNode{Expr: &LiteralNode{Token: tok}}
 	case lexer.KindIdentifier:
-		return p.parseDotExpr()
+		return p.parseIdentAttrValue()
 	case lexer.KindOp:
 		// e.g. [ref: > table.col]
 		op := p.consume()
@@ -785,6 +786,24 @@ func (p *Parser) parseAttrValue() Node {
 		tok := p.consume()
 		return &PrimaryExprNode{Expr: &VariableNode{Token: tok}}
 	}
+}
+
+// parseIdentAttrValue parses an identifier-valued attribute. Multi-word values
+// such as `set null`, `set default` and `no action` are written unquoted in
+// DBML, so consecutive identifiers are gathered into a single value.
+func (p *Parser) parseIdentAttrValue() Node {
+	first := p.parseDotExpr()
+	if _, ok := first.(*PrimaryExprNode); !ok {
+		return first // dotted (e.g. table.column); not a multi-word value
+	}
+	idents := []lexer.Token{first.FirstToken()}
+	for p.cur().Kind == lexer.KindIdentifier && !p.hasNewlineBefore() {
+		idents = append(idents, p.consume())
+	}
+	if len(idents) == 1 {
+		return first
+	}
+	return &IdentStreamNode{Tokens: idents}
 }
 
 // ---------------------------------------------------------------------------

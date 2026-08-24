@@ -294,3 +294,42 @@ func TestInterpretMultipleRefs(t *testing.T) {
 		t.Fatalf("expected 2 refs, got %d", len(db.Refs))
 	}
 }
+
+func TestInterpretRefActions(t *testing.T) {
+	tests := []struct {
+		name           string
+		src            string
+		delete, update string
+	}{
+		{"unquoted", "Ref: a.b_id > b.id [delete: set null, update: cascade]\n", "set null", "cascade"},
+		{"quoted", "Ref: a.b_id > b.id [delete: \"set null\"]\n", "set null", ""},
+		{"mixed case", "Ref: a.b_id > b.id [delete: CASCADE]\n", "cascade", ""},
+		{"none", "Ref: a.b_id > b.id\n", "", ""},
+		{"named ref", "Ref fk_a_b: a.b_id > b.id [update: restrict]\n", "", "restrict"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			db, errs := interpret(tt.src)
+			if len(errs) > 0 {
+				t.Fatalf("unexpected errors: %v", errs)
+			}
+			if len(db.Refs) != 1 {
+				t.Fatalf("expected 1 ref, got %d", len(db.Refs))
+			}
+			ref := db.Refs[0]
+			if got := derefOr(ref.OnDelete); got != tt.delete {
+				t.Errorf("onDelete: expected %q, got %q", tt.delete, got)
+			}
+			if got := derefOr(ref.OnUpdate); got != tt.update {
+				t.Errorf("onUpdate: expected %q, got %q", tt.update, got)
+			}
+		})
+	}
+}
+
+func derefOr(s *string) string {
+	if s == nil {
+		return ""
+	}
+	return *s
+}

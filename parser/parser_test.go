@@ -395,3 +395,41 @@ func TestParseCommaSettings(t *testing.T) {
 		t.Fatalf("expected 3 settings, got %d", len(list.Items))
 	}
 }
+
+func TestParseAnonymousProject(t *testing.T) {
+	_, errs := parse("Project {\n  database_type: 'MariaDB'\n}\n")
+	if len(errs) > 0 {
+		t.Fatalf("anonymous Project should be accepted: %v", errs)
+	}
+}
+
+func TestParseNamedProject(t *testing.T) {
+	prog, errs := parse("Project webmail {\n  database_type: 'MariaDB'\n}\n")
+	if len(errs) > 0 {
+		t.Fatalf("unexpected errors: %v", errs)
+	}
+	decl := prog.Body[0].(*ElementDeclNode)
+	if got := decl.Name.(*PrimaryExprNode).Expr.(*VariableNode).Token.Value; got != "webmail" {
+		t.Errorf("expected name 'webmail', got %q", got)
+	}
+}
+
+func TestParseMultiWordRefAction(t *testing.T) {
+	for _, src := range []string{
+		"Ref: a.b_id > b.id [delete: set null]\n",
+		"Ref: a.b_id > b.id [delete: no action, update: set default]\n",
+		"Ref: a.b_id > b.id [delete: \"set null\"]\n",
+	} {
+		if _, errs := parse(src); len(errs) > 0 {
+			t.Errorf("parse(%q): unexpected errors: %v", src, errs)
+		}
+	}
+}
+
+func TestParseInlineRefKeepsDotValue(t *testing.T) {
+	// Gathering multi-word values must not swallow the dotted target of a ref.
+	_, errs := parse("Table a {\n  b_id integer [ref: > b.id, not null]\n}\n")
+	if len(errs) > 0 {
+		t.Fatalf("unexpected errors: %v", errs)
+	}
+}
