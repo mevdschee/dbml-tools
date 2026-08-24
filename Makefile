@@ -5,6 +5,7 @@
 #   make test              # run the Go test suite
 #   make cross             # cross-compile for every VSCode-supported platform
 #   make cross-archives    # cross + .tar.gz / .zip archives
+#   make release           # tag v$(VERSION) and publish a GitHub release
 #   make sync-vscode       # copy cross-built binaries into the sibling
 #                          # ../dbml-tools-vscode/server-bin/ tree
 #   make clean             # remove ./dbml-tools and ./dist
@@ -24,7 +25,7 @@ LDFLAGS = -s -w \
 	-X main.commit=$(COMMIT) \
 	-X main.buildDate=$(BUILD_DATE)
 
-.PHONY: all build test cross cross-archives sync-vscode verify clean
+.PHONY: all build test cross cross-archives release release-dry sync-vscode verify clean
 
 all: build
 
@@ -40,6 +41,14 @@ cross:
 
 cross-archives:
 	./scripts/build-binaries.sh --archives
+
+# Build the archives, tag v$(VERSION) and upload everything to a GitHub release.
+# Extra flags: make release ARGS="--title 'Ref round trip' --draft"
+release:
+	./scripts/gh-release.sh $(ARGS)
+
+release-dry:
+	./scripts/gh-release.sh --dry-run $(ARGS)
 
 # Copy each cross-built binary into the extension repo's server-bin/ layout,
 # which the extension reads via path.join(extensionPath, 'server-bin', `${process.platform}-${process.arch}`).
