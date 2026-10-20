@@ -318,7 +318,12 @@ func renderColumn(col interpreter.Column, inlinePK bool, d Dialect, db *interpre
 	if d == MariaDB && isAutoInc {
 		sqlType += " AUTO_INCREMENT"
 	}
-	// Generic and SQLite: no auto-increment keyword; the type string is emitted as-is.
+	// SQLite only accepts AUTOINCREMENT on a column declared exactly INTEGER
+	// (a 64-bit rowid alias), so int/bigint/serial keys are emitted as INTEGER.
+	if d == SQLite && isAutoInc && col.PK && inlinePK {
+		sqlType = "INTEGER"
+	}
+	// Generic: no auto-increment keyword; the type string is emitted as-is.
 
 	parts := []string{quoteIdent(col.Name, d), sqlType}
 
