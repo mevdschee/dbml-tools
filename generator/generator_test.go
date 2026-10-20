@@ -506,3 +506,77 @@ func TestMigrateSchemaQualified(t *testing.T) {
 		}
 	}
 }
+
+func TestSQLiteInlineForeignKeys(t *testing.T) {
+	src := `Table s.users {
+  id int [pk, increment]
+}
+
+Table s.posts {
+  id int [pk, increment]
+  user_id int
+  parent_id int
+  records ("id", "user_id", "parent_id") {
+    '2', '1', '1'
+    '1', '1', null
+  }
+}
+
+Table s.post_tags {
+  post_id int
+  tag int
+}
+
+Ref: s.posts.user_id > s.users.id [delete: cascade]
+Ref: s.posts.parent_id > s.posts.id
+Ref {
+  s.post_tags.post_id > s.posts.id
+}
+`
+	got := Dump(parseDBML(src), SQLite)
+
+	postsIdx := strings.Index(got, `CREATE TABLE "s"."posts" (`)
+	if postsIdx < 0 {
+		t.Fatalf("posts table not found:\n%s", got)
+	}
+	postsSQL := got[postsIdx : postsIdx+strings.Index(got[postsIdx:], ");")]
+	// SQLite does not accept a schema-qualified parent table in REFERENCES.
+	for _, want := range []string{
+		`CONSTRAINT "fk_posts_user_id" FOREIGN KEY ("user_id") REFERENCES "users" ("id") ON DELETE CASCADE`,
+		`CONSTRAINT "fk_posts_parent_id" FOREIGN KEY ("parent_id") REFERENCES "posts" ("id")`,
+	} {
+		if !strings.Contains(postsSQL, want) {
+			t.Errorf("expected %q inside CREATE TABLE posts:\n%s", want, got)
+		}
+	}
+	if strings.Contains(postsSQL, "fk_post_tags") {
+		t.Errorf("post_tags FK must not be declared on posts:\n%s", got)
+	}
+	if !strings.Contains(got, `CONSTRAINT "fk_post_tags_post_id" FOREIGN KEY ("post_id") REFERENCES "posts" ("id")`) {
+		t.Errorf("expected FK from a Ref block:\n%s", got)
+	}
+	if strings.Contains(got, "ALTER TABLE") {
+		t.Errorf("SQLite must not use ALTER TABLE for FKs:\n%s", got)
+	}
+
+	// Records follow all tables, with FK checks deferred to COMMIT, so the
+	// script loads with PRAGMA foreign_keys = ON regardless of row order.
+	begin := strings.Index(got, "BEGIN;\nPRAGMA defer_foreign_keys = ON;\n")
+	insert := strings.Index(got, `INSERT INTO "s"."posts"`)
+	commit := strings.Index(got, "COMMIT;")
+	lastCreate := strings.LastIndex(got, "CREATE TABLE")
+	if begin < 0 || commit < 0 || !(lastCreate < begin && begin < insert && insert < commit) {
+		t.Errorf("expected records in a deferred-FK transaction after all tables:\n%s", got)
+	}
+}
+
+func TestMigrateSQLiteNewTableForeignKeys(t *testing.T) {
+	oldDB := parseDBML("Table users {\n  id int [pk]\n}\n")
+	newDB := parseDBML("Table users {\n  id int [pk]\n}\nTable posts {\n  id int [pk]\n  user_id int\n}\nRef: posts.user_id > users.id\n")
+	got := Migrate(oldDB, newDB, SQLite)
+
+	want := `CONSTRAINT "fk_posts_user_id" FOREIGN KEY ("user_id") REFERENCES "users" ("id")`
+	if !strings.Contains(got, want) {
+		t.Errorf("expected %q in new table:\n%s", want, got)
+	}
+}

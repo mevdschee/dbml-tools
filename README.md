@@ -162,9 +162,14 @@ dbml-tools check schema.dbml
 Generates a `CREATE TABLE` SQL script from a DBML file. The SQL dialect is
 determined by the `database_type` Project setting in the file. Foreign keys are
 emitted as `ALTER TABLE ... ADD CONSTRAINT` statements, carrying the `delete:`
-and `update:` referential actions from the `Ref` declaration. If the DBML
-contains `records` blocks (from `todbml --data`), matching `INSERT INTO`
-statements are generated after each table. A schema-qualified name such as
+and `update:` referential actions from the `Ref` declaration. SQLite cannot add
+constraints with `ALTER TABLE`, so for SQLite they are declared inside
+`CREATE TABLE`; SQLite only enforces them on connections that run
+`PRAGMA foreign_keys = ON`. If the DBML contains `records` blocks (from
+`todbml --data`), matching `INSERT INTO` statements are generated after each
+table. For SQLite the inserts follow all tables in a single transaction with
+`PRAGMA defer_foreign_keys = ON`, so the script also loads with foreign keys
+enforced. A schema-qualified name such as
 `Table my_schema.my_table` is emitted as two quoted identifiers, so the table
 is created in `my_schema` rather than as a table with a dot in its name.
 

@@ -400,6 +400,12 @@ func createTableSQL(tbl interpreter.Table, db *interpreter.Database, d Dialect) 
 		lines = append(lines, "    PRIMARY KEY ("+strings.Join(pkCols, ", ")+")")
 	}
 
+	if d == SQLite {
+		for _, fk := range inlineFKs(tbl, db, d) {
+			lines = append(lines, "    "+fk)
+		}
+	}
+
 	sb.WriteString(strings.Join(lines, ",\n"))
 	if d == MariaDB && tbl.Note != nil && tbl.Note.Value != "" {
 		sb.WriteString("\n) COMMENT = '" + strings.ReplaceAll(tbl.Note.Value, "'", "''") + "';\n")
@@ -409,9 +415,16 @@ func createTableSQL(tbl interpreter.Table, db *interpreter.Database, d Dialect) 
 	return sb.String()
 }
 
-// fkConstraints generates ALTER TABLE ADD CONSTRAINT FOREIGN KEY statements from Ref declarations.
-func fkConstraints(db *interpreter.Database, d Dialect) []string {
-	var result []string
+// foreignKey is a Ref resolved into the table holding the FK and the table it references.
+type foreignKey struct {
+	child, parent interpreter.RefEndpoint
+	ref           interpreter.Ref
+}
+
+// foreignKeys resolves Ref declarations into foreign keys, skipping
+// many-to-many refs (they need a junction table) and refs without columns.
+func foreignKeys(db *interpreter.Database) []foreignKey {
+	var result []foreignKey
 	for _, ref := range db.Refs {
 		if len(ref.Endpoints) != 2 {
 			continue
@@ -434,34 +447,64 @@ func fkConstraints(db *interpreter.Database, d Dialect) []string {
 		if len(child.FieldNames) == 0 || len(parent.FieldNames) == 0 {
 			continue
 		}
+		result = append(result, foreignKey{child: child, parent: parent, ref: ref})
+	}
+	return result
+}
 
-		constraintName := fmt.Sprintf("fk_%s_%s",
-			child.TableName,
-			strings.Join(child.FieldNames, "_"),
-		)
+// fkClause renders "CONSTRAINT name FOREIGN KEY (...) REFERENCES parent (...)"
+// plus any referential actions, without a trailing semicolon.
+func fkClause(fk foreignKey, d Dialect) string {
+	constraintName := fmt.Sprintf("fk_%s_%s",
+		fk.child.TableName,
+		strings.Join(fk.child.FieldNames, "_"),
+	)
 
-		childCols := make([]string, len(child.FieldNames))
-		for i, f := range child.FieldNames {
-			childCols[i] = quoteIdent(f, d)
+	childCols := make([]string, len(fk.child.FieldNames))
+	for i, f := range fk.child.FieldNames {
+		childCols[i] = quoteIdent(f, d)
+	}
+	parentCols := make([]string, len(fk.parent.FieldNames))
+	for i, f := range fk.parent.FieldNames {
+		parentCols[i] = quoteIdent(f, d)
+	}
+
+	// SQLite does not allow a schema-qualified parent table in REFERENCES;
+	// the parent must live in the same database as the child.
+	parentTable := endpointRef(fk.parent, d)
+	if d == SQLite {
+		parentTable = quoteIdent(fk.parent.TableName, d)
+	}
+
+	return fmt.Sprintf(
+		"CONSTRAINT %s FOREIGN KEY (%s) REFERENCES %s (%s)%s%s",
+		quoteIdent(constraintName, d),
+		strings.Join(childCols, ", "),
+		parentTable,
+		strings.Join(parentCols, ", "),
+		refAction("ON DELETE", fk.ref.OnDelete),
+		refAction("ON UPDATE", fk.ref.OnUpdate),
+	)
+}
+
+// fkConstraints generates ALTER TABLE ADD CONSTRAINT FOREIGN KEY statements from Ref declarations.
+func fkConstraints(db *interpreter.Database, d Dialect) []string {
+	var result []string
+	for _, fk := range foreignKeys(db) {
+		result = append(result, fmt.Sprintf("ALTER TABLE %s ADD %s;",
+			endpointRef(fk.child, d), fkClause(fk, d)))
+	}
+	return result
+}
+
+// inlineFKs returns the FOREIGN KEY table constraints for tbl. SQLite cannot
+// add constraints with ALTER TABLE, so its foreign keys go inside CREATE TABLE.
+func inlineFKs(tbl interpreter.Table, db *interpreter.Database, d Dialect) []string {
+	var result []string
+	for _, fk := range foreignKeys(db) {
+		if endpointKey(fk.child) == tableKey(tbl) {
+			result = append(result, fkClause(fk, d))
 		}
-		parentCols := make([]string, len(parent.FieldNames))
-		for i, f := range parent.FieldNames {
-			parentCols[i] = quoteIdent(f, d)
-		}
-
-		childTable := endpointRef(child, d)
-		parentTable := endpointRef(parent, d)
-
-		result = append(result, fmt.Sprintf(
-			"ALTER TABLE %s ADD CONSTRAINT %s FOREIGN KEY (%s) REFERENCES %s (%s)%s%s;",
-			childTable,
-			quoteIdent(constraintName, d),
-			strings.Join(childCols, ", "),
-			parentTable,
-			strings.Join(parentCols, ", "),
-			refAction("ON DELETE", ref.OnDelete),
-			refAction("ON UPDATE", ref.OnUpdate),
-		))
 	}
 	return result
 }
@@ -547,15 +590,33 @@ func Dump(db *interpreter.Database, d Dialect) string {
 		}
 	}
 
+	// SQLite declares foreign keys inside CREATE TABLE, so with
+	// PRAGMA foreign_keys = ON a row can only be inserted once its parent
+	// table exists. Records therefore follow all tables, in one transaction
+	// with deferred FK checks so that insert order does not matter.
+	inlineRecords := d != SQLite
+	hasRecords := false
 	for _, tbl := range db.Tables {
 		sb.WriteString(createTableSQL(tbl, db, d))
 		if tbl.Records != nil && len(tbl.Records.Rows) > 0 {
-			sb.WriteString(insertSQL(tbl, d))
+			hasRecords = true
+			if inlineRecords {
+				sb.WriteString(insertSQL(tbl, d))
+			}
 		}
 		sb.WriteString("\n")
 	}
+	if !inlineRecords && hasRecords {
+		sb.WriteString("BEGIN;\nPRAGMA defer_foreign_keys = ON;\n")
+		for _, tbl := range db.Tables {
+			if tbl.Records != nil && len(tbl.Records.Rows) > 0 {
+				sb.WriteString(insertSQL(tbl, d))
+			}
+		}
+		sb.WriteString("COMMIT;\n\n")
+	}
 
-	// Foreign key constraints (SQLite has very limited FK support via PRAGMA)
+	// Foreign key constraints (SQLite declares them inside CREATE TABLE instead)
 	if d != SQLite {
 		fks := fkConstraints(db, d)
 		for _, fk := range fks {
