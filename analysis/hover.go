@@ -253,10 +253,7 @@ func renderTable(sym *Symbol) string {
 	if len(sym.Columns) > 0 {
 		b.WriteString("| Column | Type | Constraints |\n| --- | --- | --- |\n")
 		for _, c := range sym.Columns {
-			t := c.TypeName
-			if len(c.TypeArgs) > 0 {
-				t += "(" + strings.Join(c.TypeArgs, ",") + ")"
-			}
+			t := c.TypeString()
 			var cs []string
 			if c.PK {
 				cs = append(cs, "pk")
@@ -281,10 +278,7 @@ func renderColumn(sym *Symbol) string {
 		return ""
 	}
 	var b strings.Builder
-	t := sym.TypeName
-	if len(sym.TypeArgs) > 0 {
-		t += "(" + strings.Join(sym.TypeArgs, ",") + ")"
-	}
+	t := sym.TypeString()
 	fmt.Fprintf(&b, "`%s` — `%s`\n", sym.Qualified, t)
 	if sym.PK {
 		b.WriteString("\n- primary key")

@@ -581,3 +581,30 @@ func TestInterpretExpressionPrimaryKeyIsAnError(t *testing.T) {
 		t.Errorf("an expression is fine in other indexes, got %v", errs)
 	}
 }
+
+func TestInterpretMultiWordTypes(t *testing.T) {
+	db, errs := interpret("Table t {\n" +
+		"  a bigint(20) unsigned [not null]\n" +
+		"  b int(5) unsigned zerofill\n" +
+		"  c double precision\n" +
+		"  d bigint unsigned\n" +
+		"}\n")
+	if len(errs) > 0 {
+		t.Fatalf("unexpected errors: %v", errs)
+	}
+	want := []struct{ name, suffix string }{
+		{"bigint", "unsigned"},
+		{"int", "unsigned zerofill"},
+		{"double precision", ""},
+		{"bigint unsigned", ""},
+	}
+	for i, w := range want {
+		ct := db.Tables[0].Fields[i].Type
+		if ct.TypeName != w.name || ct.Suffix != w.suffix {
+			t.Errorf("column %d: got name %q suffix %q, want %q %q", i, ct.TypeName, ct.Suffix, w.name, w.suffix)
+		}
+	}
+	if nn := db.Tables[0].Fields[0].NotNull; nn == nil || !*nn {
+		t.Error("settings after the suffix must still apply")
+	}
+}

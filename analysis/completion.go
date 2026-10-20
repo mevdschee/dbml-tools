@@ -679,10 +679,7 @@ func (a *Analysis) columnItemsFor(tableHint string) []Completion {
 	}
 	out := make([]Completion, 0, len(tbl.Columns))
 	for _, c := range tbl.Columns {
-		t := c.TypeName
-		if len(c.TypeArgs) > 0 {
-			t += "(" + strings.Join(c.TypeArgs, ",") + ")"
-		}
+		t := c.TypeString()
 		out = append(out, Completion{
 			Label:  c.Name,
 			Kind:   CompletionColumn,

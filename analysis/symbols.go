@@ -52,12 +52,13 @@ type Symbol struct {
 	NameRange Range
 
 	// Hover-facing metadata
-	TypeName string // for columns
-	TypeArgs []string
-	PK       bool
-	Unique   bool
-	NotNull  bool
-	Note     string
+	TypeName   string // for columns
+	TypeArgs   []string
+	TypeSuffix string // as in bigint(20) unsigned
+	PK         bool
+	Unique     bool
+	NotNull    bool
+	Note       string
 
 	// For enums: the value list
 	EnumValues []*Symbol
@@ -136,6 +137,7 @@ func BuildSymbolIndex(prog *parser.ProgramNode, db *interpreter.Database) *Symbo
 			if args, ok := f.Type.Args.([]string); ok {
 				sym.TypeArgs = args
 			}
+			sym.TypeSuffix = f.Type.Suffix
 			sym.PK = f.PK
 			sym.Unique = f.Unique
 			if f.NotNull != nil {
@@ -390,3 +392,16 @@ func nodeFullRange(n parser.Node) Range {
 
 // Token-level utility for callers that need a token's range.
 func TokenRange(t lexer.Token) Range { return tokenRange(t) }
+
+// TypeString renders a column symbol's type as written, such as
+// bigint(20,0) unsigned.
+func (s *Symbol) TypeString() string {
+	t := s.TypeName
+	if len(s.TypeArgs) > 0 {
+		t += "(" + strings.Join(s.TypeArgs, ",") + ")"
+	}
+	if s.TypeSuffix != "" {
+		t += " " + s.TypeSuffix
+	}
+	return t
+}

@@ -931,3 +931,25 @@ func TestMigrateRenamedPrimaryKey(t *testing.T) {
 		t.Errorf("expected no MariaDB changes:\n%s", got)
 	}
 }
+
+func TestDumpTypeSuffix(t *testing.T) {
+	db := parseDBML("Table t {\n  id bigint(20) unsigned [pk, increment]\n  a int(5) unsigned zerofill [not null]\n  b decimal(10,2) unsigned\n}\n")
+	got := Dump(db, MariaDB)
+	for _, want := range []string{
+		"`id` bigint(20) unsigned AUTO_INCREMENT PRIMARY KEY",
+		"`a` int(5) unsigned zerofill NOT NULL",
+		"`b` decimal(10, 2) unsigned",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("expected %q in:\n%s", want, got)
+		}
+	}
+	// Signed and unsigned are different types.
+	signed := parseDBML("Table t {\n  id bigint [pk, increment]\n  a int [not null]\n  b decimal(10,2)\n}\n")
+	if got := Migrate(signed, db, MariaDB); strings.Count(got, "MODIFY COLUMN") != 3 {
+		t.Errorf("expected three changed columns:\n%s", got)
+	}
+	if got := Migrate(db, db, MariaDB); got != "" {
+		t.Errorf("expected no changes:\n%s", got)
+	}
+}

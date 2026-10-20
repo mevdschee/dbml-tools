@@ -81,6 +81,8 @@ type ColumnType struct {
 	SchemaName *string     `json:"schemaName"`
 	TypeName   string      `json:"type_name"`
 	Args       interface{} `json:"args"`
+	// Suffix holds the words after the arguments, as in bigint(20) unsigned.
+	Suffix string `json:"suffix,omitempty"`
 }
 
 type TokenRange struct {
@@ -345,9 +347,21 @@ func (interp *Interpreter) interpretField(n parser.Node) *Column {
 			rest = rest[2:]
 		}
 
-		// process remaining args: type args (tuple) and settings (list)
+		// process remaining args: type args (tuple), more words of the type
+		// and settings (list)
 		for _, arg := range rest {
-			if list, ok := arg.(*parser.ListExprNode); ok {
+			if word, ok := typeWord(arg); ok {
+				// A word before the arguments belongs to the name, as in
+				// double precision; after them it is a suffix, as in
+				// bigint(20) unsigned.
+				if col.Type.Args == nil {
+					col.Type.TypeName += " " + word
+				} else if col.Type.Suffix == "" {
+					col.Type.Suffix = word
+				} else {
+					col.Type.Suffix += " " + word
+				}
+			} else if list, ok := arg.(*parser.ListExprNode); ok {
 				interp.applyColumnSettings(col, list)
 			} else if tuple, ok := arg.(*parser.TupleExprNode); ok {
 				// Type arguments, e.g. (255) in varchar(255) or (10,2) in decimal(10,2)
@@ -376,6 +390,20 @@ func (interp *Interpreter) interpretField(n parser.Node) *Column {
 	}
 
 	return col
+}
+
+// typeWord returns the bare identifier n holds, as the parser leaves the
+// further words of a multi-word type such as double precision.
+func typeWord(n parser.Node) (string, bool) {
+	pe, ok := n.(*parser.PrimaryExprNode)
+	if !ok {
+		return "", false
+	}
+	v, ok := pe.Expr.(*parser.VariableNode)
+	if !ok || v.Token.Kind != lexer.KindIdentifier {
+		return "", false
+	}
+	return v.Token.Value, true
 }
 
 // isColumnName reports whether s looks like a valid column name rather than a

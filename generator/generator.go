@@ -155,6 +155,16 @@ func findEnum(typeName string, db *interpreter.Database) *interpreter.Enum {
 // only SQL syntax (identifier quoting, enum expansion, auto-increment keywords,
 // etc.) is affected by the dialect.
 func mapType(ct interpreter.ColumnType, args []string, d Dialect, db *interpreter.Database) (string, bool) {
+	sqlType, isSerial := mapTypeName(ct, args, d, db)
+	// A suffix such as unsigned follows the arguments: bigint(20) unsigned.
+	if ct.Suffix != "" && findEnum(qualifiedName(ct.SchemaName, ct.TypeName), db) == nil {
+		sqlType += " " + ct.Suffix
+	}
+	return sqlType, isSerial
+}
+
+// mapTypeName maps a type name and its arguments, see mapType.
+func mapTypeName(ct interpreter.ColumnType, args []string, d Dialect, db *interpreter.Database) (string, bool) {
 	// A schema-qualified type keeps its schema in the emitted SQL.
 	typeName := qualifiedName(ct.SchemaName, ct.TypeName)
 
