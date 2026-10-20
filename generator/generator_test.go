@@ -208,6 +208,17 @@ func TestDumpBlogSQLite(t *testing.T) {
 			t.Error("expected AUTOINCREMENT for SQLite")
 		}
 	})
+	t.Run("autoincrement_requires_integer", func(t *testing.T) {
+		// SQLite rejects AUTOINCREMENT unless the column type is exactly INTEGER.
+		for _, line := range strings.Split(got, "\n") {
+			if strings.Contains(line, "AUTOINCREMENT") && !strings.Contains(line, " INTEGER PRIMARY KEY AUTOINCREMENT") {
+				t.Errorf("AUTOINCREMENT on non-INTEGER column: %s", strings.TrimSpace(line))
+			}
+		}
+		if !strings.Contains(got, `"id" INTEGER PRIMARY KEY AUTOINCREMENT`) {
+			t.Error("expected bigint/int increment pk to become INTEGER PRIMARY KEY AUTOINCREMENT")
+		}
+	})
 	t.Run("double_quote_identifiers", func(t *testing.T) {
 		if !strings.Contains(got, `CREATE TABLE "categories"`) {
 			t.Error("expected double-quote identifiers for SQLite")
