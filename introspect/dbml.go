@@ -58,8 +58,11 @@ func writeTable(sb *strings.Builder, t *Table, normalize bool) {
 	var indexLines []string
 
 	for _, c := range t.Constraints {
-		if len(c.Columns) <= 1 {
-			continue // already reflected on the column
+		// A single-column constraint is reflected on the column, unless it is
+		// a primary key with a name the database would not give it.
+		if len(c.Columns) <= 1 && !(c.IsPrimary && len(c.Columns) == 1 &&
+			c.Name != "" && c.Name != t.Name+"_pkey" && c.Name != "PRIMARY") {
+			continue
 		}
 		var attrs []string
 		if c.IsPrimary {
@@ -75,12 +78,15 @@ func writeTable(sb *strings.Builder, t *Table, normalize bool) {
 	}
 
 	for _, idx := range t.Indexes {
-		var colStr string
-		if idx.Expression != "" {
-			colStr = fmt.Sprintf("(`%s`)", idx.Expression)
-		} else {
-			colStr = fmt.Sprintf("(%s)", quotedCols(idx.Columns))
+		keys := make([]string, len(idx.Columns))
+		for i, c := range idx.Columns {
+			if i < len(idx.Exprs) && idx.Exprs[i] {
+				keys[i] = "`" + c + "`"
+			} else {
+				keys[i] = fmt.Sprintf("%q", c)
+			}
 		}
+		colStr := "(" + strings.Join(keys, ", ") + ")"
 		var attrs []string
 		if idx.IsUnique {
 			attrs = append(attrs, "unique")

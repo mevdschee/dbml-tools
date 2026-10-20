@@ -11,6 +11,8 @@ func introspectSQLite(ctx context.Context, db *sql.DB) (*DBSchema, error) {
 	result := &DBSchema{}
 	tableMap := map[string]*Table{}
 	var tableOrder []string
+	// pkCols holds each table's primary key columns, indexed by pk_order - 1.
+	pkCols := map[string][]string{}
 
 	// ── 1. Tables & columns ──────────────────────────────────────────────────
 	q, err := readSQL("sql/sqlite/tables_columns.sql")
@@ -50,6 +52,14 @@ func introspectSQLite(ctx context.Context, db *sql.DB) (*DBSchema, error) {
 			col.Default = &columnDefault.String
 			col.DefaultType = inferSQLiteDefault(columnDefault.String)
 		}
+		if pkOrder > 0 {
+			cols := pkCols[tableName]
+			for len(cols) < pkOrder {
+				cols = append(cols, "")
+			}
+			cols[pkOrder-1] = columnName
+			pkCols[tableName] = cols
+		}
 		// Single-column PK: pkOrder == 1 and it's the only PK column.
 		// We handle multi-col PKs in the constraints step below.
 		if pkOrder == 1 {
@@ -67,21 +77,16 @@ func introspectSQLite(ctx context.Context, db *sql.DB) (*DBSchema, error) {
 
 	// Fix multi-column PKs: if any table has columns with pkOrder > 1,
 	// the PK is composite — add a Constraint instead of per-column [pk].
-	for _, t := range tableMap {
-		var pkCols []string
-		for _, col := range t.Columns {
-			if col.IsPrimaryKey {
-				pkCols = append(pkCols, col.Name)
-			}
-		}
-		if len(pkCols) > 1 {
+	for name, t := range tableMap {
+		if cols := pkCols[name]; len(cols) > 1 {
 			// Remove IsPrimaryKey from individual columns and use a Constraint.
 			for _, col := range t.Columns {
 				col.IsPrimaryKey = false
+				col.IsIncrement = false
 			}
 			t.Constraints = append(t.Constraints, &Constraint{
 				Name:      "",
-				Columns:   pkCols,
+				Columns:   cols,
 				IsPrimary: true,
 			})
 		}
@@ -104,15 +109,19 @@ func introspectSQLite(ctx context.Context, db *sql.DB) (*DBSchema, error) {
 
 	type idxKey struct{ table, name string }
 	idxMap := map[idxKey]*Index{}
+	idxOrigin := map[idxKey]string{}
+	// The keys parsed from an index's SQL, read once per expression index.
+	idxSQLKeys := map[idxKey][]string{}
 	var idxOrder []idxKey
 
 	for rows2.Next() {
 		var (
-			tableName, indexName, origin, columnName string
-			isUniqueInt, columnPosition              int
+			tableName, indexName, origin string
+			isUniqueInt, columnPosition  int
+			columnName, indexSQL         sql.NullString
 		)
 		if err := rows2.Scan(&tableName, &indexName, &isUniqueInt, &origin,
-			&columnPosition, &columnName); err != nil {
+			&columnPosition, &columnName, &indexSQL); err != nil {
 			return nil, fmt.Errorf("indexes scan: %w", err)
 		}
 
@@ -122,17 +131,27 @@ func introspectSQLite(ctx context.Context, db *sql.DB) (*DBSchema, error) {
 			isUnique := isUniqueInt != 0
 			idx = &Index{Name: indexName, IsUnique: isUnique, Type: "btree"}
 			idxMap[key] = idx
+			idxOrigin[key] = origin
 			idxOrder = append(idxOrder, key)
 		}
-		if columnName != "" {
-			idx.Columns = append(idx.Columns, columnName)
+		if columnName.Valid {
+			idx.addKey(columnName.String, false)
+		} else {
+			keys, parsed := idxSQLKeys[key]
+			if !parsed {
+				keys = sqliteIndexKeys(indexSQL.String)
+				idxSQLKeys[key] = keys
+			}
+			if columnPosition < len(keys) {
+				idx.addKey(keys[columnPosition], true)
+			}
 		}
 
 		// origin='u' is a UNIQUE constraint — reflect that on the column if single-col
 		if origin == "u" && isUniqueInt != 0 {
 			if t, ok := tableMap[tableName]; ok {
 				for _, col := range t.Columns {
-					if col.Name == columnName {
+					if col.Name == columnName.String {
 						col.IsUnique = true
 					}
 				}
@@ -148,8 +167,9 @@ func introspectSQLite(ctx context.Context, db *sql.DB) (*DBSchema, error) {
 	for _, key := range idxOrder {
 		if t, ok := tableMap[key.table]; ok {
 			idx := idxMap[key]
-			// Skip single-column unique indexes — already reflected on the column.
-			if idx.IsUnique && len(idx.Columns) == 1 {
+			// Skip single-column UNIQUE constraints — already reflected on the
+			// column. A unique index created with CREATE INDEX is kept.
+			if idxOrigin[key] == "u" && len(idx.Columns) == 1 {
 				continue
 			}
 			t.Indexes = append(t.Indexes, idx)
@@ -243,4 +263,74 @@ func inferSQLiteDefault(val string) string {
 		return "number"
 	}
 	return "expression"
+}
+
+// sqliteIndexKeys splits the key list of a CREATE INDEX statement into its
+// keys, with an expression's wrapping parentheses and any ASC/DESC removed.
+// SQLite reports no name for an expression key, so this is the only place
+// its text can be read from.
+func sqliteIndexKeys(stmt string) []string {
+	var keys []string
+	depth, start := 0, -1
+	var quote byte
+	for i := 0; i < len(stmt); i++ {
+		c := stmt[i]
+		switch {
+		case quote != 0:
+			if c == quote {
+				quote = 0
+			}
+		case c == '"' || c == '\'' || c == '`' || c == '[':
+			quote = c
+			if c == '[' {
+				quote = ']'
+			}
+		case c == '(':
+			depth++
+			if depth == 1 && start < 0 {
+				start = i + 1
+			}
+		case c == ',' && depth == 1:
+			keys = append(keys, stmt[start:i])
+			start = i + 1
+		case c == ')':
+			depth--
+			if depth == 0 && start >= 0 {
+				keys = append(keys, stmt[start:i])
+				for j, k := range keys {
+					keys[j] = trimIndexKey(k)
+				}
+				return keys
+			}
+		}
+	}
+	return nil
+}
+
+func trimIndexKey(k string) string {
+	k = strings.TrimSpace(k)
+	upper := strings.ToUpper(k)
+	for _, dir := range []string{" ASC", " DESC"} {
+		if strings.HasSuffix(upper, dir) {
+			k = strings.TrimSpace(k[:len(k)-len(dir)])
+			break
+		}
+	}
+	// Strip one pair of parentheses only when they wrap the whole key.
+	if strings.HasPrefix(k, "(") && strings.HasSuffix(k, ")") {
+		depth := 0
+		for i := 0; i < len(k); i++ {
+			switch k[i] {
+			case '(':
+				depth++
+			case ')':
+				depth--
+				if depth == 0 && i < len(k)-1 {
+					return k
+				}
+			}
+		}
+		k = strings.TrimSpace(k[1 : len(k)-1])
+	}
+	return k
 }

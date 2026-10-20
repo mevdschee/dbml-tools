@@ -1,4 +1,7 @@
 -- Named parameters: :schema
+--
+-- index_keys lists the keys of an index in order, separated by a unit
+-- separator (chr(31)). Each key is 'C:<column name>' or 'E:<expression>'.
 WITH user_tables AS (
   SELECT schemaname AS tableschema, tablename
   FROM pg_tables
@@ -12,26 +15,33 @@ index_info AS (
     ix.indisunique                                           AS is_unique,
     ix.indisprimary                                          AS is_primary,
     am.amname                                                AS index_type,
-    array_to_string(array_agg(a.attname ORDER BY x.n), ',') AS columns,
-    pg_get_expr(ix.indexprs, ix.indrelid)                   AS expressions,
+    (
+      SELECT string_agg(
+        CASE
+          WHEN ix.indkey[k - 1] = 0
+            THEN 'E:' || pg_get_indexdef(ix.indexrelid, k, true)
+          ELSE 'C:' || (
+            SELECT a.attname FROM pg_attribute a
+            WHERE a.attrelid = ix.indrelid AND a.attnum = ix.indkey[k - 1]
+          )
+        END,
+        chr(31) ORDER BY k)
+      FROM generate_series(1, ix.indnkeyatts) AS k
+    )                                                        AS index_keys,
     CASE
       WHEN ix.indisprimary THEN 'PRIMARY KEY'
-      WHEN ix.indisunique  THEN 'UNIQUE'
+      -- A unique index created with CREATE UNIQUE INDEX backs no constraint.
+      WHEN EXISTS (
+        SELECT 1 FROM pg_constraint con
+        WHERE con.conindid = ix.indexrelid AND con.contype = 'u'
+      ) THEN 'UNIQUE'
       ELSE NULL
     END                                                      AS constraint_type
   FROM pg_class t
   JOIN pg_index ix ON t.oid = ix.indrelid
   JOIN pg_class i  ON i.oid = ix.indexrelid
-  LEFT JOIN pg_attribute a
-    ON a.attrelid = t.oid AND a.attnum = ANY(ix.indkey)
   JOIN pg_am am ON i.relam = am.oid
-  LEFT JOIN generate_subscripts(ix.indkey, 1) AS x(n)
-    ON a.attnum = ix.indkey[x.n]
   WHERE t.relkind = 'r'
-  GROUP BY
-    t.relnamespace, t.relname, i.relname,
-    ix.indisunique, ix.indisprimary, am.amname,
-    ix.indexprs, ix.indrelid
 )
 SELECT
   ut.tableschema   AS table_schema,
@@ -40,11 +50,10 @@ SELECT
   ii.is_unique,
   ii.is_primary,
   ii.index_type,
-  ii.columns       AS index_columns,
-  ii.expressions   AS index_expressions,
+  ii.index_keys,
   ii.constraint_type
 FROM user_tables ut
-LEFT JOIN index_info ii
+JOIN index_info ii
   ON ut.tableschema = ii.table_schema AND ut.tablename = ii.table_name
-WHERE ii.columns IS NOT NULL
+WHERE ii.index_keys IS NOT NULL
 ORDER BY ut.tablename, ii.constraint_type NULLS LAST, ii.index_name

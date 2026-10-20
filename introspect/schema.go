@@ -16,11 +16,17 @@ type Column struct {
 
 // Index represents a non-constraint index on a table.
 type Index struct {
-	Name       string
-	Columns    []string
-	IsUnique   bool
-	Type       string // "btree", "hash", etc.
-	Expression string // for functional/expression indexes
+	Name     string
+	Columns  []string // one entry per key: a column name or an expression
+	Exprs    []bool   // aligned with Columns; true where the key is an expression
+	IsUnique bool
+	Type     string // "btree", "hash", etc.
+}
+
+// addKey appends a key, a column name or an expression, to the index.
+func (idx *Index) addKey(value string, expr bool) {
+	idx.Columns = append(idx.Columns, value)
+	idx.Exprs = append(idx.Exprs, expr)
 }
 
 // Constraint represents a PRIMARY KEY or UNIQUE constraint.

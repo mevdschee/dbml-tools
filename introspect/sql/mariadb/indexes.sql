@@ -20,7 +20,4 @@ WHERE st.table_schema = :schema
     WHERE pfu.table_name = st.table_name
   )
   AND st.index_type IN ('BTREE', 'HASH')
-GROUP BY
-  st.table_name, st.non_unique, st.index_name, st.column_name,
-  st.sub_part, st.index_type
-ORDER BY st.table_name, st.index_name
+ORDER BY st.table_name, st.index_name, st.seq_in_index

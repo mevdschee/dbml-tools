@@ -30,6 +30,7 @@ func introspectPostgres(ctx context.Context, db *sql.DB, schema string) (*DBSche
 			dataType                           string
 			charMaxLen                         sql.NullInt64
 			numPrecision, numScale             sql.NullInt64
+			dtPrecision                        sql.NullInt64
 			udtSchema, udtName                 string
 			identityIncrement                  sql.NullString
 			isNullable                         string
@@ -40,7 +41,7 @@ func introspectPostgres(ctx context.Context, db *sql.DB, schema string) (*DBSche
 		)
 		if err := rows.Scan(
 			&tableSchema, &tableName, &columnName,
-			&dataType, &charMaxLen, &numPrecision, &numScale,
+			&dataType, &charMaxLen, &numPrecision, &numScale, &dtPrecision,
 			&udtSchema, &udtName,
 			&identityIncrement, &isNullable, &columnDefault, &ordinalPosition,
 			&defaultType, &tableComment, &columnComment,
@@ -61,7 +62,7 @@ func introspectPostgres(ctx context.Context, db *sql.DB, schema string) (*DBSche
 
 		col := &Column{
 			Name:       columnName,
-			Type:       pgColumnType(dataType, charMaxLen, numPrecision, numScale, udtSchema, udtName),
+			Type:       pgColumnType(dataType, charMaxLen, numPrecision, numScale, dtPrecision, udtSchema, udtName),
 			IsNullable: isNullable == "YES",
 		}
 		if columnComment.Valid {
@@ -102,14 +103,13 @@ func introspectPostgres(ctx context.Context, db *sql.DB, schema string) (*DBSche
 			tableSchema, tableName, indexName string
 			isUnique, isPrimary               bool
 			indexType                         string
-			indexColumns                      string
-			indexExpressions                  sql.NullString
+			indexKeys                         string
 			constraintType                    sql.NullString
 		)
 		if err := rows2.Scan(
 			&tableSchema, &tableName, &indexName,
 			&isUnique, &isPrimary, &indexType,
-			&indexColumns, &indexExpressions, &constraintType,
+			&indexKeys, &constraintType,
 		); err != nil {
 			return nil, fmt.Errorf("indexes scan: %w", err)
 		}
@@ -118,10 +118,22 @@ func introspectPostgres(ctx context.Context, db *sql.DB, schema string) (*DBSche
 		if !ok {
 			continue
 		}
-		cols := splitCols(indexColumns)
+		idx := &Index{
+			Name:     indexName,
+			IsUnique: isUnique,
+			Type:     indexType,
+		}
+		for _, key := range strings.Split(indexKeys, "\x1f") {
+			if expr, ok := strings.CutPrefix(key, "E:"); ok {
+				idx.addKey(expr, true)
+			} else {
+				idx.addKey(strings.TrimPrefix(key, "C:"), false)
+			}
+		}
 
 		if isPrimary || (isUnique && constraintType.Valid) {
 			// Treat as a named constraint
+			cols := idx.Columns
 			isPK := isPrimary
 			c := &Constraint{Name: indexName, Columns: cols, IsPrimary: isPK}
 			t.Constraints = append(t.Constraints, c)
@@ -140,15 +152,6 @@ func introspectPostgres(ctx context.Context, db *sql.DB, schema string) (*DBSche
 			}
 		} else {
 			// Regular index
-			idx := &Index{
-				Name:     indexName,
-				Columns:  cols,
-				IsUnique: isUnique,
-				Type:     indexType,
-			}
-			if indexExpressions.Valid {
-				idx.Expression = indexExpressions.String
-			}
 			t.Indexes = append(t.Indexes, idx)
 		}
 	}
@@ -270,7 +273,12 @@ func introspectPostgres(ctx context.Context, db *sql.DB, schema string) (*DBSche
 }
 
 // pgColumnType builds the human-readable PostgreSQL column type.
-func pgColumnType(dataType string, charMaxLen, numPrecision, numScale sql.NullInt64, udtSchema, udtName string) string {
+func pgColumnType(dataType string, charMaxLen, numPrecision, numScale, dtPrecision sql.NullInt64, udtSchema, udtName string) string {
+	// A time type keeps a precision other than the default of 6.
+	precision := ""
+	if dtPrecision.Valid && dtPrecision.Int64 != 6 {
+		precision = fmt.Sprintf("(%d)", dtPrecision.Int64)
+	}
 	switch strings.ToLower(dataType) {
 	case "character varying":
 		if charMaxLen.Valid {
@@ -291,19 +299,21 @@ func pgColumnType(dataType string, charMaxLen, numPrecision, numScale sql.NullIn
 		}
 		return strings.ToLower(dataType)
 	case "timestamp without time zone":
-		return "timestamp"
+		return "timestamp" + precision
 	case "timestamp with time zone":
-		return "timestamptz"
+		return "timestamptz" + precision
 	case "time without time zone":
-		return "time"
+		return "time" + precision
 	case "time with time zone":
-		return "timetz"
+		return "timetz" + precision
 	case "double precision":
 		return "float8"
 	case "real":
 		return "float4"
 	case "user-defined":
-		if udtSchema != "" && udtSchema != "pg_catalog" {
+		// Like tableIdent, leave out the default schema, so the type matches
+		// the name its Enum is declared under.
+		if udtSchema != "" && udtSchema != "pg_catalog" && udtSchema != "public" {
 			return udtSchema + "." + udtName
 		}
 		return udtName

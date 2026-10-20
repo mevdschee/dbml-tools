@@ -2,6 +2,7 @@ package generator
 
 import (
 	"fmt"
+	"regexp"
 	"strings"
 
 	"github.com/mevdschee/dbml-tools/interpreter"
@@ -290,40 +291,7 @@ func renderDefault(def *interpreter.Default, d Dialect) string {
 // renderColumn renders a single column definition (without leading indent).
 // inlinePK: whether to emit PRIMARY KEY inline (only for single-PK tables).
 func renderColumn(col interpreter.Column, inlinePK bool, d Dialect, db *interpreter.Database) string {
-	args := typeArgs(col)
-	sqlType, isSerialType := mapType(col.Type, args, d, db)
-	isAutoInc := isSerialType || (col.Increment != nil && *col.Increment)
-
-	// For Postgres with [increment]: promote to SERIAL/BIGSERIAL.
-	if d == Postgres && !isSerialType && isAutoInc {
-		if strings.ToLower(col.Type.TypeName) == "bigint" {
-			sqlType = "BIGSERIAL"
-		} else {
-			sqlType = "SERIAL"
-		}
-		isSerialType = true
-	}
-
-	// For Generic with [increment]: represent as canonical serial/bigserial.
-	if d == Generic && !isSerialType && isAutoInc {
-		if strings.ToLower(col.Type.TypeName) == "bigint" {
-			sqlType = "bigserial"
-		} else {
-			sqlType = "serial"
-		}
-		isSerialType = true
-	}
-
-	// For MariaDB with serial type or [increment]: append AUTO_INCREMENT keyword.
-	if d == MariaDB && isAutoInc {
-		sqlType += " AUTO_INCREMENT"
-	}
-	// SQLite only accepts AUTOINCREMENT on a column declared exactly INTEGER
-	// (a 64-bit rowid alias), so int/bigint/serial keys are emitted as INTEGER.
-	if d == SQLite && isAutoInc && col.PK && inlinePK {
-		sqlType = "INTEGER"
-	}
-	// Generic: no auto-increment keyword; the type string is emitted as-is.
+	sqlType, isAutoInc := columnType(col, inlinePK, d, db)
 
 	parts := []string{quoteIdent(col.Name, d), sqlType}
 
@@ -359,6 +327,47 @@ func renderColumn(col interpreter.Column, inlinePK bool, d Dialect, db *interpre
 	return strings.Join(parts, " ")
 }
 
+// columnType returns the SQL type of a column as rendered, including the
+// auto-increment form of the dialect, and whether the column auto-increments.
+func columnType(col interpreter.Column, inlinePK bool, d Dialect, db *interpreter.Database) (string, bool) {
+	args := typeArgs(col)
+
+	sqlType, isSerialType := mapType(col.Type, args, d, db)
+	isAutoInc := isSerialType || (col.Increment != nil && *col.Increment)
+
+	// For Postgres with [increment]: promote to SERIAL/BIGSERIAL.
+	if d == Postgres && !isSerialType && isAutoInc {
+		if strings.ToLower(col.Type.TypeName) == "bigint" {
+			sqlType = "BIGSERIAL"
+		} else {
+			sqlType = "SERIAL"
+		}
+		isSerialType = true
+	}
+
+	// For Generic with [increment]: represent as canonical serial/bigserial.
+	if d == Generic && !isSerialType && isAutoInc {
+		if strings.ToLower(col.Type.TypeName) == "bigint" {
+			sqlType = "bigserial"
+		} else {
+			sqlType = "serial"
+		}
+		isSerialType = true
+	}
+
+	// For MariaDB with serial type or [increment]: append AUTO_INCREMENT keyword.
+	if d == MariaDB && isAutoInc {
+		sqlType += " AUTO_INCREMENT"
+	}
+	// SQLite only accepts AUTOINCREMENT on a column declared exactly INTEGER
+	// (a 64-bit rowid alias), so int/bigint/serial keys are emitted as INTEGER.
+	if d == SQLite && isAutoInc && col.PK && inlinePK {
+		sqlType = "INTEGER"
+	}
+	// Generic: no auto-increment keyword; the type string is emitted as-is.
+	return sqlType, isAutoInc
+}
+
 // createEnumTypePostgres generates a PostgreSQL CREATE TYPE ... AS ENUM statement.
 func createEnumTypePostgres(e interpreter.Enum) string {
 	vals := make([]string, len(e.Values))
@@ -382,22 +391,35 @@ func createTableSQL(tbl interpreter.Table, db *interpreter.Database, d Dialect) 
 		}
 	}
 
+	// A primary key is declared on its column, unless it spans several
+	// columns or is named. MariaDB always names the primary key PRIMARY.
+	// SQLite keeps a single-column key inline, where AUTOINCREMENT needs it.
+	pkName := pkIndexName(tbl)
+	if d == MariaDB {
+		pkName = ""
+	}
+	inlinePK := pkCount == 1 && (pkName == "" || d == SQLite)
+
 	sb.WriteString(fmt.Sprintf("CREATE TABLE %s (\n", tableRef(tbl, d)))
 
 	var lines []string
 	for _, col := range tbl.Fields {
-		lines = append(lines, "    "+renderColumn(col, pkCount == 1, d, db))
+		lines = append(lines, "    "+renderColumn(col, inlinePK, d, db))
 	}
 
-	// Composite PRIMARY KEY constraint
-	if pkCount > 1 {
+	// PRIMARY KEY constraint
+	if pkCount > 0 && !inlinePK {
 		var pkCols []string
 		for _, col := range tbl.Fields {
 			if col.PK {
 				pkCols = append(pkCols, quoteIdent(col.Name, d))
 			}
 		}
-		lines = append(lines, "    PRIMARY KEY ("+strings.Join(pkCols, ", ")+")")
+		constraint := ""
+		if pkName != "" {
+			constraint = "CONSTRAINT " + quoteIdent(pkName, d) + " "
+		}
+		lines = append(lines, "    "+constraint+"PRIMARY KEY ("+strings.Join(pkCols, ", ")+")")
 	}
 
 	if d == SQLite {
@@ -596,8 +618,12 @@ func Dump(db *interpreter.Database, d Dialect) string {
 	// with deferred FK checks so that insert order does not matter.
 	inlineRecords := d != SQLite
 	hasRecords := false
+	names := indexNames(db, d)
 	for _, tbl := range db.Tables {
 		sb.WriteString(createTableSQL(tbl, db, d))
+		for _, stmt := range tableIndexes(tbl, names[tableKey(tbl)], d) {
+			sb.WriteString(stmt + "\n")
+		}
 		if tbl.Records != nil && len(tbl.Records.Rows) > 0 {
 			hasRecords = true
 			if inlineRecords {
@@ -641,20 +667,21 @@ func Dump(db *interpreter.Database, d Dialect) string {
 	return sb.String()
 }
 
-// Migrate generates ALTER TABLE statements to migrate oldDB to newDB.
+// Migrate generates ALTER TABLE statements to migrate oldDB to newDB. It
+// returns an empty string when the schemas do not differ.
 func Migrate(oldDB, newDB *interpreter.Database, d Dialect) string {
 	var sb strings.Builder
 
 	oldTables := tableMap(oldDB)
 	newTables := tableMap(newDB)
-	hasOutput := false
+	oldNames := indexNames(oldDB, d)
+	newNames := indexNames(newDB, d)
 
 	// New enum types (PostgreSQL only)
 	if d == Postgres {
 		oldEnums := enumMap(oldDB)
 		for _, e := range newDB.Enums {
 			if _, exists := oldEnums[enumKey(e)]; !exists {
-				hasOutput = true
 				sb.WriteString("-- New enum type\n")
 				sb.WriteString(createEnumTypePostgres(e))
 				sb.WriteString("\n\n")
@@ -662,39 +689,71 @@ func Migrate(oldDB, newDB *interpreter.Database, d Dialect) string {
 		}
 	}
 
-	// New tables
-	for _, tbl := range newDB.Tables {
-		if _, exists := oldTables[tableKey(tbl)]; !exists {
-			hasOutput = true
-			sb.WriteString(fmt.Sprintf("-- New table: %s\n", tableKey(tbl)))
-			sb.WriteString(createTableSQL(tbl, newDB, d))
-			sb.WriteString("\n")
+	// Tables that are removed, by schema-qualified name. In PostgreSQL and
+	// SQLite an index cannot take such a name before the table is dropped.
+	removed := map[string]bool{}
+	for _, tbl := range oldDB.Tables {
+		if _, exists := newTables[tableKey(tbl)]; !exists && d != MariaDB {
+			removed[tableKey(tbl)] = true
 		}
 	}
 
-	// Modified tables (same name, different columns)
+	// Modified tables (same name, different columns). They go before removed
+	// tables, so a dropped column takes its foreign key to a removed table
+	// along, and before new tables, as PostgreSQL and SQLite share one
+	// namespace between tables and indexes: a new table may take the name of
+	// an index dropped here.
+	var late []string
 	for _, newTbl := range newDB.Tables {
 		oldTbl, exists := oldTables[tableKey(newTbl)]
 		if !exists {
 			continue
 		}
-		stmts := diffTable(oldTbl, newTbl, oldDB, newDB, d)
+		drops, creates, lateCreates := diffIndexes(oldTbl, newTbl,
+			oldNames[tableKey(oldTbl)], newNames[tableKey(newTbl)], removed, d)
+		dropPK, addPK := diffPK(oldTbl, newTbl, d)
+		// Drop indexes and the primary key first, as a dropped column may
+		// still be indexed, and create them last, as a new index or key may
+		// use a new column.
+		stmts := append(drops, dropPK...)
+		stmts = append(stmts, diffTable(oldTbl, newTbl, oldDB, newDB, d)...)
+		stmts = append(stmts, addPK...)
+		stmts = append(stmts, creates...)
 		if len(stmts) > 0 {
-			hasOutput = true
 			sb.WriteString(fmt.Sprintf("-- Modified table: %s\n", tableKey(newTbl)))
 			for _, stmt := range stmts {
 				sb.WriteString(stmt + "\n")
 			}
 			sb.WriteString("\n")
 		}
+		if len(lateCreates) > 0 {
+			late = append(late, fmt.Sprintf("-- Modified table: %s\n%s\n\n",
+				tableKey(newTbl), strings.Join(lateCreates, "\n")))
+		}
 	}
 
 	// Removed tables
 	for _, tbl := range oldDB.Tables {
 		if _, exists := newTables[tableKey(tbl)]; !exists {
-			hasOutput = true
 			sb.WriteString(fmt.Sprintf("-- Removed table: %s\n", tableKey(tbl)))
 			sb.WriteString(fmt.Sprintf("DROP TABLE %s;\n\n", tableRef(tbl, d)))
+		}
+	}
+
+	// Indexes named after a removed table
+	for _, stmt := range late {
+		sb.WriteString(stmt)
+	}
+
+	// New tables
+	for _, tbl := range newDB.Tables {
+		if _, exists := oldTables[tableKey(tbl)]; !exists {
+			sb.WriteString(fmt.Sprintf("-- New table: %s\n", tableKey(tbl)))
+			sb.WriteString(createTableSQL(tbl, newDB, d))
+			for _, stmt := range tableIndexes(tbl, newNames[tableKey(tbl)], d) {
+				sb.WriteString(stmt + "\n")
+			}
+			sb.WriteString("\n")
 		}
 	}
 
@@ -703,15 +762,10 @@ func Migrate(oldDB, newDB *interpreter.Database, d Dialect) string {
 		newEnums := enumMap(newDB)
 		for _, e := range oldDB.Enums {
 			if _, exists := newEnums[enumKey(e)]; !exists {
-				hasOutput = true
 				sb.WriteString(fmt.Sprintf("-- Removed enum type: %s\n", enumKey(e)))
 				sb.WriteString(fmt.Sprintf("DROP TYPE %s;\n\n", enumRef(e, d)))
 			}
 		}
-	}
-
-	if !hasOutput {
-		sb.WriteString("-- No changes detected\n")
 	}
 
 	return sb.String()
@@ -724,6 +778,8 @@ func diffTable(oldTbl, newTbl interpreter.Table, oldDB, newDB *interpreter.Datab
 	oldCols := colMap(oldTbl)
 	newCols := colMap(newTbl)
 	tblRef := tableRef(newTbl, d)
+	oldInlinePK := len(pkColumns(oldTbl)) == 1
+	newInlinePK := len(pkColumns(newTbl)) == 1
 
 	// Added columns (iterate in new-schema order)
 	for _, col := range newTbl.Fields {
@@ -754,9 +810,9 @@ func diffTable(oldTbl, newTbl interpreter.Table, oldDB, newDB *interpreter.Datab
 			continue
 		}
 
-		oldSQL, _ := mapType(oldCol.Type, typeArgs(oldCol), d, oldDB)
-		newSQL, _ := mapType(newCol.Type, typeArgs(newCol), d, newDB)
-		typeChanged := oldSQL != newSQL
+		oldSQL := diffType(oldCol, oldInlinePK, d, oldDB)
+		newSQL := diffType(newCol, newInlinePK, d, newDB)
+		typeChanged := !sameType(oldSQL, newSQL, isEnumColumn(oldCol, oldDB) || isEnumColumn(newCol, newDB), d)
 		// When either schema is normalized, compare via normalizeForDiff
 		// so that equivalent types with different names or serial semantics
 		// (e.g. "binary" vs "blob", "serial" vs "int" with increment)
@@ -810,6 +866,98 @@ func diffTable(oldTbl, newTbl interpreter.Table, oldDB, newDB *interpreter.Datab
 	}
 
 	return stmts
+}
+
+// diffType returns the type a column is compared by in a migration. SQLite
+// stores an auto-increment key as INTEGER whatever type the DBML declares.
+// inlinePK tells whether the table's primary key is a single column.
+func diffType(col interpreter.Column, inlinePK bool, d Dialect, db *interpreter.Database) string {
+	sqlType, _ := mapType(col.Type, typeArgs(col), d, db)
+	if d == SQLite {
+		if t, _ := columnType(col, inlinePK, d, db); t == "INTEGER" {
+			return t
+		}
+	}
+	return sqlType
+}
+
+// sameType compares two rendered column types. SQL type names are not case
+// sensitive (SQLite even reports INTEGER and TEXT for integer and text), but
+// a quoted enum type name is. Aliases the database reports under another name
+// compare as equal, see canonicalType.
+func sameType(a, b string, isEnum bool, d Dialect) bool {
+	if isEnum {
+		return a == b
+	}
+	return canonicalType(a, d) == canonicalType(b, d)
+}
+
+// displayWidth matches the display width MariaDB reports on integer types,
+// such as the (20) in bigint(20) or bigint(20) unsigned.
+var displayWidth = regexp.MustCompile(`^(tinyint|smallint|mediumint|int|bigint)\(\d+\)`)
+
+// typeAliases maps type names to the name the database reports them under.
+var typeAliases = map[Dialect]map[string]string{
+	Postgres: {
+		"int": "integer", "int4": "integer", "int2": "smallint", "int8": "bigint",
+		"serial4": "serial", "serial8": "bigserial",
+		"bool": "boolean", "float8": "double precision", "float4": "real",
+		"decimal": "numeric", "varchar": "character varying", "char": "character",
+		"bpchar": "character", "timestamp": "timestamp without time zone",
+		"timestamptz": "timestamp with time zone", "time": "time without time zone",
+		"timetz": "time with time zone", "varbit": "bit varying",
+	},
+	MariaDB: {
+		"integer": "int", "bool": "tinyint(1)", "boolean": "tinyint(1)",
+		"dec": "decimal", "numeric": "decimal", "fixed": "decimal",
+		"double precision": "double", "real": "double",
+		"character varying": "varchar", "character": "char",
+	},
+}
+
+// typeArgsRe matches the arguments of a type, such as (10, 2) or (3).
+var typeArgsRe = regexp.MustCompile(`\([^)]*\)`)
+
+// canonicalType reduces a rendered column type to the form the database
+// reports it in, so a DBML type compares equal to the same type read back
+// from a live database: PostgreSQL reports int as integer, and MariaDB
+// reports bigint as bigint(20) and boolean as tinyint(1).
+func canonicalType(t string, d Dialect) string {
+	t = strings.Join(strings.Fields(strings.ToLower(t)), " ")
+	if d == MariaDB && !strings.HasPrefix(t, "tinyint(1)") {
+		t = displayWidth.ReplaceAllString(t, "$1")
+	}
+	// Take the arguments out, as PostgreSQL puts them inside a multi-word
+	// name: timestamptz(3) reads back as timestamp(3) with time zone.
+	args := ""
+	if loc := typeArgsRe.FindStringIndex(t); loc != nil {
+		args = strings.ReplaceAll(t[loc[0]:loc[1]], " ", "")
+		t = strings.TrimSpace(t[:loc[0]] + t[loc[1]:])
+	}
+	aliases := typeAliases[d]
+	// Map the type name, keeping any suffix such as AUTO_INCREMENT, unsigned
+	// or []. A multi-word name such as "double precision" is one name.
+	name, rest := t, ""
+	if i := strings.IndexAny(t, " ["); i >= 0 {
+		name, rest = t[:i], t[i:]
+	}
+	for alias, canon := range aliases {
+		for _, n := range []string{alias, canon} {
+			if strings.Contains(n, " ") && len(n) > len(name) && strings.HasPrefix(t, n) &&
+				(len(t) == len(n) || t[len(n)] == ' ' || t[len(n)] == '[') {
+				name, rest = n, t[len(n):]
+			}
+		}
+	}
+	if a, ok := aliases[name]; ok {
+		name = a
+	}
+	return name + args + rest
+}
+
+// isEnumColumn reports whether a column's type is an enum declared in db.
+func isEnumColumn(col interpreter.Column, db *interpreter.Database) bool {
+	return findEnum(qualifiedName(col.Type.SchemaName, col.Type.TypeName), db) != nil
 }
 
 // normalizeForDiff returns a canonical type string for a column, suitable for

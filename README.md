@@ -173,6 +173,19 @@ enforced. A schema-qualified name such as
 `Table my_schema.my_table` is emitted as two quoted identifiers, so the table
 is created in `my_schema` rather than as a table with a dot in its name.
 
+Each entry of an `indexes { }` block becomes a `CREATE [UNIQUE] INDEX` after its
+table, with columns and backtick expressions in order, and `type:` as
+`USING <type>` (SQLite has a single index type, MariaDB supports `btree` and
+`hash`, and does not support expression indexes, which are left as a comment).
+An index marked `pk` becomes the table's `PRIMARY KEY`, under its `name:` where
+the dialect allows. An unnamed index is named `<table>_<columns>_idx`, as
+PostgreSQL would. Index names are scoped to the table in MariaDB, but shared
+with tables and other indexes across a schema in PostgreSQL and SQLite, so a
+name used more than once in its scope is prefixed with `<table>_`. In MariaDB
+that scope includes the key name a `unique` column takes, which is its own name. Names
+are cut to the length the database takes: PostgreSQL keeps 63 bytes and MariaDB
+64 characters.
+
 ```sh
 dbml-tools tosql schema.dbml
 ```
@@ -226,6 +239,21 @@ dbml-tools migrate --exclude 'spatial_ref_sys,geography_columns' old.dbml postgr
 before comparison. This means equivalent types with different names (e.g.
 `binary` vs `blob`, `text` vs `longtext`) are correctly recognized as identical
 and do not produce spurious ALTER statements.
+
+Indexes are matched by the name `tosql` would give them, prefix included, so a
+database created from a DBML file compares equal to it. A new or changed index
+is created after the column changes, and a dropped or changed one is dropped
+before them. Index expressions are compared without casts, parentheses and
+whitespace, as databases report them in their own form (PostgreSQL reads
+`lower(email)` back as `lower((email)::text)`). A change of primary key drops
+the old key and adds the new one (SQLite needs a table rebuild for that, so it
+gets a comment). In PostgreSQL a renamed primary key is renamed, as an unnamed
+one is named `<table>_pkey`.
+
+Column types are compared under the name the database reports them by, so
+`int` matches PostgreSQL's `integer`, and `bigint` and `boolean` match
+MariaDB's `bigint(20)` and `tinyint(1)`. When nothing differs, `migrate` writes
+nothing to stdout and `-- No changes detected` to stderr.
 
 The `--exclude` / `--include` filter flags work the same as for `todbml` and
 apply to both schema sides.

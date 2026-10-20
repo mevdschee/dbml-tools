@@ -593,3 +593,341 @@ func TestInlineRefForeignKeys(t *testing.T) {
 		t.Errorf("expected inline FK from inline ref:\n%s", lite)
 	}
 }
+
+const indexesDBML = `
+Table users {
+  id int [pk, increment]
+  email varchar(255) [unique]
+  org_id int
+  name varchar(100)
+
+  indexes {
+    email [name: "email"]
+    org_id [name: "org"]
+    name [type: hash]
+    (org_id, ` + "`lower(name)`" + `) [unique, name: "org_name"]
+  }
+}
+
+Table memberships {
+  user_id int
+  group_id int
+  role varchar(20)
+
+  indexes {
+    (user_id, group_id) [pk, name: "memberships_pk"]
+    role [name: "org"]
+  }
+}
+
+Table org {
+  id int [pk]
+  indexes {
+    id [name: "users"]
+  }
+}
+`
+
+func TestDumpIndexesPostgres(t *testing.T) {
+	got := Dump(parseDBML(indexesDBML), Postgres)
+
+	for _, want := range []string{
+		`CREATE INDEX "email" ON "users" ("email");`,
+		// "org" is used by two tables and is a table name, "users" is a
+		// table name: PostgreSQL names share one namespace per schema.
+		`CREATE INDEX "users_org" ON "users" ("org_id");`,
+		`CREATE INDEX "memberships_org" ON "memberships" ("role");`,
+		`CREATE INDEX "org_users" ON "org" ("id");`,
+		`CREATE INDEX "users_name_idx" ON "users" USING hash ("name");`,
+		`CREATE UNIQUE INDEX "org_name" ON "users" ("org_id", (lower(name)));`,
+		`CONSTRAINT "memberships_pk" PRIMARY KEY ("user_id", "group_id")`,
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("expected %q in:\n%s", want, got)
+		}
+	}
+	if strings.Contains(got, `INDEX "memberships_pk"`) {
+		t.Errorf("a pk index is the PRIMARY KEY, not a CREATE INDEX:\n%s", got)
+	}
+}
+
+func TestDumpIndexesSQLite(t *testing.T) {
+	got := Dump(parseDBML(indexesDBML), SQLite)
+
+	for _, want := range []string{
+		`CREATE INDEX "users_org" ON "users" ("org_id");`,
+		// SQLite has one index type, so type: hash is dropped.
+		`CREATE INDEX "users_name_idx" ON "users" ("name");`,
+		`CREATE UNIQUE INDEX "org_name" ON "users" ("org_id", (lower(name)));`,
+		`CONSTRAINT "memberships_pk" PRIMARY KEY ("user_id", "group_id")`,
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("expected %q in:\n%s", want, got)
+		}
+	}
+
+	// SQLite puts the schema on the index name, not on the table.
+	got = Dump(parseDBML("Table s.t {\n  a int\n  indexes {\n    a [name: 'i']\n  }\n}\n"), SQLite)
+	if !strings.Contains(got, `CREATE INDEX "s"."i" ON "t" ("a");`) {
+		t.Errorf("expected schema-qualified index name:\n%s", got)
+	}
+}
+
+func TestDumpIndexesMariaDB(t *testing.T) {
+	got := Dump(parseDBML(indexesDBML), MariaDB)
+
+	for _, want := range []string{
+		// Index names are scoped to the table, so "org" needs no prefix ...
+		"CREATE INDEX `org` ON `users` (`org_id`);",
+		"CREATE INDEX `org` ON `memberships` (`role`);",
+		"CREATE INDEX `users` ON `org` (`id`);",
+		// ... but users.email UNIQUE already takes the key name "email".
+		"CREATE INDEX `users_email` ON `users` (`email`);",
+		"CREATE INDEX `users_name_idx` ON `users` (`name`) USING HASH;",
+		"-- MariaDB: expression index `org_name` on `users` is not supported",
+		"PRIMARY KEY (`user_id`, `group_id`)",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("expected %q in:\n%s", want, got)
+		}
+	}
+	if strings.Contains(got, "CONSTRAINT `memberships_pk`") {
+		t.Errorf("MariaDB always names the primary key PRIMARY:\n%s", got)
+	}
+}
+
+func TestMigrateIndexes(t *testing.T) {
+	oldDB := parseDBML(`Table t {
+  id int [pk]
+  a int
+  b int
+  gone int
+  indexes {
+    a [name: "a"]
+    b [name: "b"]
+    gone [name: "gone"]
+  }
+}`)
+	newDB := parseDBML(`Table t {
+  id int [pk]
+  a int
+  b int
+  c int
+  indexes {
+    a [name: "a"]
+    b [unique, name: "b"]
+    c
+  }
+}`)
+	got := Migrate(oldDB, newDB, Postgres)
+
+	want := `-- Modified table: t
+DROP INDEX "b";
+DROP INDEX "gone";
+ALTER TABLE "t" ADD COLUMN "c" int;
+ALTER TABLE "t" DROP COLUMN "gone";
+CREATE UNIQUE INDEX "b" ON "t" ("b");
+CREATE INDEX "t_c_idx" ON "t" ("c");
+`
+	if !strings.Contains(got, want) {
+		t.Errorf("expected:\n%s\ngot:\n%s", want, got)
+	}
+
+	if got := Migrate(newDB, newDB, Postgres); got != "" {
+		t.Errorf("identical schemas must not differ:\n%s", got)
+	}
+}
+
+func TestMigrateIndexesCompareResolvedNames(t *testing.T) {
+	// The DBML names both indexes "org"; the database holds them under their
+	// prefixed names, as tosql created them. That is not a difference.
+	dbml := parseDBML("Table a {\n  x int\n  indexes {\n    x [name: 'org']\n  }\n}\n" +
+		"Table b {\n  x int\n  indexes {\n    x [name: 'org']\n  }\n}\n")
+	live := parseDBML("Table a {\n  x int\n  indexes {\n    x [name: 'a_org']\n  }\n}\n" +
+		"Table b {\n  x int\n  indexes {\n    x [name: 'b_org']\n  }\n}\n")
+	if got := Migrate(live, dbml, Postgres); got != "" {
+		t.Errorf("prefixed names must match:\n%s", got)
+	}
+}
+
+func TestMigrateIndexExpressionsAsTheDatabaseReportsThem(t *testing.T) {
+	dbml := parseDBML("Table t {\n  e varchar\n  indexes {\n    `lower(e)` [name: 'i']\n  }\n}\n")
+	live := parseDBML("Table t {\n  e varchar\n  indexes {\n    `lower((e)::text)` [name: 'i']\n  }\n}\n")
+	if got := Migrate(live, dbml, Postgres); got != "" {
+		t.Errorf("PostgreSQL's rendering of the same expression must match:\n%s", got)
+	}
+}
+
+func TestMigrateSQLiteRoundTripTypes(t *testing.T) {
+	// SQLite reports the INTEGER that tosql used for an auto-increment key,
+	// and upper-cases built-in type names.
+	dbml := parseDBML("Table t {\n  id bigint [pk, increment]\n  body text\n}\n")
+	live := parseDBML("Table t {\n  id INTEGER [pk, increment]\n  body TEXT\n}\n")
+	if got := Migrate(live, dbml, SQLite); got != "" {
+		t.Errorf("expected no changes:\n%s", got)
+	}
+}
+
+func TestMigrateTypeAliases(t *testing.T) {
+	// The database reports a type under its own name: PostgreSQL reads int
+	// back as integer, MariaDB adds a display width and stores boolean as
+	// tinyint(1).
+	pgDBML := parseDBML("Table t {\n  a int\n  b bool\n  c varchar(20)\n  d timestamptz\n  e decimal(10,2)\n}\n")
+	pgLive := parseDBML("Table t {\n  a integer\n  b boolean\n  c \"character varying\"(20)\n  d \"timestamp with time zone\"\n  e numeric(10,2)\n}\n")
+	if got := Migrate(pgLive, pgDBML, Postgres); got != "" {
+		t.Errorf("expected no PostgreSQL changes:\n%s", got)
+	}
+
+	myDBML := parseDBML("Table t {\n  id bigint [pk, increment]\n  a integer [not null]\n  b boolean\n  d tinyint\n}\n")
+	myLive := parseDBML("Table t {\n  id bigint(20) [pk, increment]\n  a int(11) [not null]\n  b tinyint(1)\n  d tinyint(4)\n}\n")
+	if got := Migrate(myLive, myDBML, MariaDB); got != "" {
+		t.Errorf("expected no MariaDB changes:\n%s", got)
+	}
+
+	// Real changes are still found.
+	changed := parseDBML("Table t {\n  a bigint\n  b smallint\n  c varchar(30)\n  d \"timestamp without time zone\"\n  e numeric(10,2)\n}\n")
+	got := Migrate(pgLive, changed, Postgres)
+	for _, col := range []string{`"a"`, `"b"`, `"c"`, `"d"`} {
+		if !strings.Contains(got, "ALTER COLUMN "+col+" TYPE") {
+			t.Errorf("expected a type change for %s:\n%s", col, got)
+		}
+	}
+	if strings.Contains(got, `"e"`) {
+		t.Errorf("unexpected change for e:\n%s", got)
+	}
+	if got := Migrate(myLive, parseDBML("Table t {\n  id bigint(20) [pk, increment]\n  a int(11) [not null]\n  b tinyint(4)\n  d tinyint(4)\n}\n"), MariaDB); !strings.Contains(got, "MODIFY COLUMN `b` tinyint(4)") {
+		t.Errorf("tinyint(1) to tinyint(4) is a change:\n%s", got)
+	}
+}
+
+func TestMigratePrimaryKey(t *testing.T) {
+	oldDB := parseDBML("Table t {\n  a int [pk]\n  b int [not null]\n}\n")
+	newDB := parseDBML("Table t {\n  a int\n  b int\n  indexes {\n    (a, b) [pk, name: 't_ab']\n  }\n}\n")
+
+	want := `-- Modified table: t
+ALTER TABLE "t" DROP CONSTRAINT "t_pkey";
+ALTER TABLE "t" ADD CONSTRAINT "t_ab" PRIMARY KEY ("a", "b");
+`
+	if got := Migrate(oldDB, newDB, Postgres); !strings.Contains(got, want) {
+		t.Errorf("expected:\n%s\ngot:\n%s", want, got)
+	}
+	if got := Migrate(newDB, oldDB, Postgres); !strings.Contains(got, `DROP CONSTRAINT "t_ab";`) ||
+		!strings.Contains(got, `ADD PRIMARY KEY ("a");`) {
+		t.Errorf("expected the named key dropped and a added:\n%s", got)
+	}
+
+	want = "ALTER TABLE `t` DROP PRIMARY KEY;\nALTER TABLE `t` ADD PRIMARY KEY (`a`, `b`);\n"
+	if got := Migrate(oldDB, newDB, MariaDB); !strings.Contains(got, want) {
+		t.Errorf("expected:\n%s\ngot:\n%s", want, got)
+	}
+	if got := Migrate(oldDB, newDB, SQLite); !strings.Contains(got, "-- SQLite: cannot change the primary key") {
+		t.Errorf("expected a SQLite comment:\n%s", got)
+	}
+	// The same key declared on the column or as a pk index is no change.
+	if got := Migrate(oldDB, parseDBML("Table t {\n  a int\n  b int [not null]\n  indexes {\n    a [pk]\n  }\n}\n"), Postgres); got != "" {
+		t.Errorf("expected no changes:\n%s", got)
+	}
+}
+
+func TestPostgresIndexNamesAreTruncated(t *testing.T) {
+	long := strings.Repeat("x", 70)
+	db := parseDBML("Table t {\n  a int\n  indexes {\n    a [name: '" + long + "']\n  }\n}\n")
+	if got := Dump(db, Postgres); !strings.Contains(got, `"`+long[:63]+`"`) || strings.Contains(got, long[:64]) {
+		t.Errorf("expected the name cut to 63 bytes:\n%s", got)
+	}
+	live := parseDBML("Table t {\n  a int\n  indexes {\n    a [name: '" + long[:63] + "']\n  }\n}\n")
+	if got := Migrate(live, db, Postgres); got != "" {
+		t.Errorf("expected no changes:\n%s", got)
+	}
+	if got := Dump(db, SQLite); !strings.Contains(got, long) {
+		t.Errorf("SQLite keeps long names:\n%s", got)
+	}
+}
+
+func TestMariaDBIndexNamesAreTruncated(t *testing.T) {
+	long := strings.Repeat("é", 70)
+	db := parseDBML("Table t {\n  a int\n  indexes {\n    a [name: '" + long + "']\n  }\n}\n")
+	if got := Dump(db, MariaDB); !strings.Contains(got, "`"+strings.Repeat("é", 64)+"`") {
+		t.Errorf("expected the name cut to 64 characters:\n%s", got)
+	}
+}
+
+func TestIndexNamesStayUniqueAfterPrefixing(t *testing.T) {
+	db := parseDBML("Table t {\n  a int\n  indexes {\n    a\n    a [type: hash]\n  }\n}\n")
+	got := Dump(db, Postgres)
+	if !strings.Contains(got, `CREATE INDEX "t_t_a_idx" ON "t" ("a");`) ||
+		!strings.Contains(got, `CREATE INDEX "t_t_a_idx1" ON "t" USING hash ("a");`) {
+		t.Errorf("expected two distinct names:\n%s", got)
+	}
+	// Both indexes take part in a migration.
+	if got := Migrate(parseDBML("Table t {\n  a int\n}\n"), db, Postgres); strings.Count(got, "CREATE INDEX") != 2 {
+		t.Errorf("expected both indexes created:\n%s", got)
+	}
+}
+
+func TestNamedSingleColumnPrimaryKey(t *testing.T) {
+	db := parseDBML("Table t {\n  id int\n  indexes {\n    id [pk, name: 'my_pk']\n  }\n}\n")
+	if got := Dump(db, Postgres); !strings.Contains(got, `CONSTRAINT "my_pk" PRIMARY KEY ("id")`) {
+		t.Errorf("expected the named key kept:\n%s", got)
+	}
+	if got := Dump(db, MariaDB); !strings.Contains(got, "`id` int PRIMARY KEY") {
+		t.Errorf("MariaDB names the key PRIMARY, so it stays inline:\n%s", got)
+	}
+	if got := Dump(db, SQLite); !strings.Contains(got, `"id" int PRIMARY KEY`) {
+		t.Errorf("SQLite keeps a single-column key inline:\n%s", got)
+	}
+}
+
+func TestMigrateNewTableTakesDroppedIndexName(t *testing.T) {
+	oldDB := parseDBML("Table a {\n  x int\n  indexes {\n    x [name: 'foo']\n  }\n}\n")
+	newDB := parseDBML("Table a {\n  x int\n  indexes {\n    x [name: 'foo']\n  }\n}\nTable foo {\n  y int\n}\n")
+	got := Migrate(oldDB, newDB, Postgres)
+	drop, create := strings.Index(got, `DROP INDEX "foo";`), strings.Index(got, `CREATE TABLE "foo"`)
+	if drop < 0 || create < 0 || drop > create {
+		t.Errorf("expected the index dropped before the table is created:\n%s", got)
+	}
+
+	// The other way round: a new index takes the name of a removed table.
+	got = Migrate(newDB, oldDB, Postgres)
+	drop, create = strings.Index(got, `DROP TABLE "foo";`), strings.Index(got, `CREATE INDEX "foo"`)
+	if drop < 0 || create < 0 || drop > create {
+		t.Errorf("expected the table dropped before the index is created:\n%s", got)
+	}
+}
+
+func TestMigrateDropsColumnBeforeItsTable(t *testing.T) {
+	// The dropped column holds the foreign key to the removed table.
+	oldDB := parseDBML("Table u {\n  id int [pk]\n}\nTable p {\n  id int [pk]\n  u_id int [ref: > u.id]\n}\n")
+	newDB := parseDBML("Table p {\n  id int [pk]\n}\n")
+	got := Migrate(oldDB, newDB, Postgres)
+	if strings.Index(got, `DROP COLUMN "u_id"`) > strings.Index(got, `DROP TABLE "u"`) {
+		t.Errorf("expected the column dropped first:\n%s", got)
+	}
+}
+
+func TestMigrateTypeArgumentsInsideName(t *testing.T) {
+	dbml := parseDBML("Table t {\n  a timestamptz(3)\n  b \"time(0) without time zone\"\n}\n")
+	live := parseDBML("Table t {\n  a \"timestamp(3) with time zone\"\n  b \"time(0)\"\n}\n")
+	if got := Migrate(live, dbml, Postgres); got != "" {
+		t.Errorf("expected no changes:\n%s", got)
+	}
+}
+
+func TestMigrateRenamedPrimaryKey(t *testing.T) {
+	oldDB := parseDBML("Table t {\n  a int\n  b int\n  indexes {\n    (a, b) [pk, name: 't_ab']\n  }\n}\n")
+	newDB := parseDBML("Table t {\n  a int\n  b int\n  indexes {\n    (a, b) [pk, name: 't_pk']\n  }\n}\n")
+	want := `ALTER TABLE "t" RENAME CONSTRAINT "t_ab" TO "t_pk";`
+	if got := Migrate(oldDB, newDB, Postgres); !strings.Contains(got, want) {
+		t.Errorf("expected %s, got:\n%s", want, got)
+	}
+	// An unnamed key is named <table>_pkey.
+	live := parseDBML("Table t {\n  a int\n  b int\n  indexes {\n    (a, b) [pk, name: 't_pkey']\n  }\n}\n")
+	unnamed := parseDBML("Table t {\n  a int\n  b int\n  indexes {\n    (a, b) [pk]\n  }\n}\n")
+	if got := Migrate(live, unnamed, Postgres); got != "" {
+		t.Errorf("expected no changes:\n%s", got)
+	}
+	// MariaDB always names it PRIMARY.
+	if got := Migrate(oldDB, newDB, MariaDB); got != "" {
+		t.Errorf("expected no MariaDB changes:\n%s", got)
+	}
+}

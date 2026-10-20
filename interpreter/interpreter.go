@@ -2,6 +2,7 @@ package interpreter
 
 import (
 	"fmt"
+	"slices"
 	"strings"
 
 	"github.com/mevdschee/dbml-tools/lexer"
@@ -37,11 +38,29 @@ type Table struct {
 	Alias      *string       `json:"alias"`
 	Fields     []Column      `json:"fields"`
 	Token      TokenRange    `json:"token"`
-	Indexes    []interface{} `json:"indexes"`
+	Indexes    []Index       `json:"indexes"`
 	Partials   []interface{} `json:"partials"`
 	Checks     []interface{} `json:"checks"`
 	Note       *Note         `json:"note,omitempty"`
 	Records    *TableRecords `json:"records,omitempty"`
+}
+
+// Index is one entry of a table's `indexes { }` block.
+type Index struct {
+	Columns []IndexColumn `json:"columns"`
+	Name    *string       `json:"name,omitempty"`
+	Type    *string       `json:"type,omitempty"`
+	Unique  bool          `json:"unique,omitempty"`
+	PK      bool          `json:"pk,omitempty"`
+	Note    *Note         `json:"note,omitempty"`
+	Token   TokenRange    `json:"token"`
+}
+
+// IndexColumn is a column name (Type "column") or a backtick expression
+// (Type "expression") in an index.
+type IndexColumn struct {
+	Value string `json:"value"`
+	Type  string `json:"type"`
 }
 
 type Column struct {
@@ -191,7 +210,7 @@ func (interp *Interpreter) Interpret(prog *parser.ProgramNode) *Database {
 func (interp *Interpreter) interpretTable(db *Database, decl *parser.ElementDeclNode) {
 	tbl := Table{
 		Alias:    nil,
-		Indexes:  []interface{}{},
+		Indexes:  []Index{},
 		Partials: []interface{}{},
 		Checks:   []interface{}{},
 		Token:    nodeRange(decl),
@@ -212,7 +231,34 @@ func (interp *Interpreter) interpretTable(db *Database, decl *parser.ElementDecl
 
 	var recordsCols []string
 	awaitRecordsBlock := false
+	awaitIndexesBlock := false
 	for _, item := range block.Body {
+		// After seeing "indexes", the next item is the BlockExpr with the indexes.
+		if awaitIndexesBlock {
+			awaitIndexesBlock = false
+			if blk, ok := item.(*parser.BlockExprNode); ok {
+				for _, entry := range blk.Body {
+					idx, ok := interpretIndex(entry)
+					if !ok {
+						continue
+					}
+					if idx.PK && slices.ContainsFunc(idx.Columns, func(c IndexColumn) bool {
+						return c.Type == "expression"
+					}) {
+						interp.Errors = append(interp.Errors, Error{
+							Message:  "a primary key cannot contain an expression",
+							Position: entry.FirstToken().StartPos,
+						})
+					}
+					tbl.Indexes = append(tbl.Indexes, idx)
+				}
+				continue
+			}
+		}
+		if pe, ok := item.(*parser.PrimaryExprNode); ok && extractName(pe) == "indexes" {
+			awaitIndexesBlock = true
+			continue
+		}
 		// After seeing "records (...)", the next item is the BlockExpr with data rows.
 		if awaitRecordsBlock {
 			awaitRecordsBlock = false
@@ -240,6 +286,22 @@ func (interp *Interpreter) interpretTable(db *Database, decl *parser.ElementDecl
 		if col != nil {
 			tbl.Fields = append(tbl.Fields, *col)
 			db.Refs = append(db.Refs, inlineRefs(tbl, *col)...)
+		}
+	}
+
+	// The columns of a [pk] index are the table's primary key, as if marked
+	// [pk] themselves. The block may come before the columns, so this is
+	// done last.
+	for _, idx := range tbl.Indexes {
+		if !idx.PK {
+			continue
+		}
+		for _, c := range idx.Columns {
+			for i := range tbl.Fields {
+				if c.Type == "column" && tbl.Fields[i].Name == c.Value {
+					tbl.Fields[i].PK = true
+				}
+			}
 		}
 	}
 
@@ -459,6 +521,80 @@ func refRelations(op string) (left, right string, ok bool) {
 		return "*", "*", true
 	}
 	return "", "", false
+}
+
+// interpretIndex reads one entry of an indexes block: a column, a backtick
+// expression or a tuple of those, optionally followed by [settings].
+func interpretIndex(n parser.Node) (Index, bool) {
+	idx := Index{Token: nodeRange(n)}
+	target := n
+	var settings []parser.Node
+	if fa, ok := n.(*parser.FuncAppNode); ok {
+		target = fa.Callee
+		settings = fa.Args
+	}
+
+	if tup, ok := target.(*parser.TupleExprNode); ok {
+		for _, item := range tup.Items {
+			if col, ok := indexColumn(item); ok {
+				idx.Columns = append(idx.Columns, col)
+			}
+		}
+	} else if col, ok := indexColumn(target); ok {
+		idx.Columns = append(idx.Columns, col)
+	}
+	if len(idx.Columns) == 0 {
+		return Index{}, false
+	}
+
+	for _, arg := range settings {
+		list, ok := arg.(*parser.ListExprNode)
+		if !ok {
+			continue
+		}
+		for _, item := range list.Items {
+			attr, ok := item.(*parser.AttributeNode)
+			if !ok {
+				continue
+			}
+			switch strings.ToLower(extractAttrName(attr)) {
+			case "unique":
+				idx.Unique = true
+			case "pk", "primary key":
+				idx.PK = true
+			case "name":
+				if attr.Value != nil {
+					v := extractStringValue(attr.Value)
+					idx.Name = &v
+				}
+			case "type":
+				if attr.Value != nil {
+					v := strings.ToLower(extractStringValue(attr.Value))
+					idx.Type = &v
+				}
+			case "note":
+				if attr.Value != nil {
+					idx.Note = &Note{Value: extractStringValue(attr.Value), Token: nodeRange(attr)}
+				}
+			}
+		}
+	}
+	return idx, true
+}
+
+// indexColumn reads a single index column: a backtick literal is an
+// expression, anything else names a column.
+func indexColumn(n parser.Node) (IndexColumn, bool) {
+	if pe, ok := n.(*parser.PrimaryExprNode); ok {
+		if lit, ok := pe.Expr.(*parser.LiteralNode); ok && lit.Token.Kind == lexer.KindFuncExpr {
+			return IndexColumn{Value: lit.Token.Value, Type: "expression"}, true
+		}
+	}
+	name := extractName(n)
+	if name == "" {
+		return IndexColumn{}, false
+	}
+	return IndexColumn{Value: name, Type: "column"}, true
 }
 
 // ---------------------------------------------------------------------------

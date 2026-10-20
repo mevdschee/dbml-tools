@@ -224,7 +224,13 @@ func doMigrate(args []string) {
 
 	d := resolveDialectDefault(resolveDialect(oldArg, newArg, oldDB, newDB))
 
-	fmt.Print(generator.Migrate(oldDB, newDB, d))
+	sql := generator.Migrate(oldDB, newDB, d)
+	if sql == "" {
+		// Keep stdout empty, so "no output" means "no changes" to a script.
+		fmt.Fprintln(os.Stderr, "-- No changes detected")
+		return
+	}
+	fmt.Print(sql)
 }
 
 // loadSchema reads a schema from either a DBML file path or a live database DSN.

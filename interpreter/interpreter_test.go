@@ -509,3 +509,75 @@ func TestInterpretInlineRefs(t *testing.T) {
 		t.Error("other settings next to ref must still apply")
 	}
 }
+
+func TestInterpretIndexes(t *testing.T) {
+	src := "Table t {\n" +
+		"  a int\n" +
+		"  b int\n" +
+		"  indexes {\n" +
+		"    a\n" +
+		"    (a, \"b\") [unique, name: 'ab', type: hash]\n" +
+		"    `lower(c)` [note: 'n']\n" +
+		"    (a, `b + 1`) [unique]\n" +
+		"    (a, b) [pk]\n" +
+		"  }\n" +
+		"}\n"
+	db, errs := interpret(src)
+	if len(errs) > 0 {
+		t.Fatalf("unexpected errors: %v", errs)
+	}
+	tbl := db.Tables[0]
+	if len(tbl.Fields) != 2 {
+		t.Fatalf("the indexes block must not add fields, got %d", len(tbl.Fields))
+	}
+	if len(tbl.Indexes) != 5 {
+		t.Fatalf("expected 5 indexes, got %d", len(tbl.Indexes))
+	}
+
+	cols := func(idx Index) string {
+		var parts []string
+		for _, c := range idx.Columns {
+			parts = append(parts, c.Type+":"+c.Value)
+		}
+		return strings.Join(parts, ",")
+	}
+	if got := cols(tbl.Indexes[0]); got != "column:a" {
+		t.Errorf("index 0 columns: %s", got)
+	}
+
+	ab := tbl.Indexes[1]
+	if got := cols(ab); got != "column:a,column:b" {
+		t.Errorf("index 1 columns: %s", got)
+	}
+	if !ab.Unique || ab.Name == nil || *ab.Name != "ab" || ab.Type == nil || *ab.Type != "hash" {
+		t.Errorf("index 1 settings: %+v", ab)
+	}
+
+	expr := tbl.Indexes[2]
+	if got := cols(expr); got != "expression:lower(c)" {
+		t.Errorf("index 2 columns: %s", got)
+	}
+	if expr.Note == nil || expr.Note.Value != "n" {
+		t.Errorf("index 2 note: %+v", expr.Note)
+	}
+
+	mixed := tbl.Indexes[3]
+	if got := cols(mixed); got != "column:a,expression:b + 1" || !mixed.Unique {
+		t.Errorf("index 3: %s unique=%v", got, mixed.Unique)
+	}
+
+	pk := tbl.Indexes[4]
+	if got := cols(pk); got != "column:a,column:b" || !pk.PK {
+		t.Errorf("index 4: %s pk=%v", got, pk.PK)
+	}
+}
+
+func TestInterpretExpressionPrimaryKeyIsAnError(t *testing.T) {
+	_, errs := interpret("Table t {\n  a varchar\n  indexes {\n    `lower(a)` [pk]\n  }\n}\n")
+	if len(errs) != 1 || errs[0].Message != "a primary key cannot contain an expression" {
+		t.Errorf("expected one error, got %v", errs)
+	}
+	if _, errs := interpret("Table t {\n  a varchar\n  indexes {\n    `lower(a)` [unique]\n  }\n}\n"); len(errs) != 0 {
+		t.Errorf("an expression is fine in other indexes, got %v", errs)
+	}
+}

@@ -31,6 +31,7 @@ SELECT
   c.character_maximum_length,
   c.numeric_precision,
   c.numeric_scale,
+  c.datetime_precision,
   c.udt_schema,
   c.udt_name,
   c.identity_increment,

@@ -1,6 +1,7 @@
 package introspect
 
 import (
+	"database/sql"
 	"strings"
 	"testing"
 
@@ -81,6 +82,58 @@ func TestGeneratedDBMLKeepsRefActions(t *testing.T) {
 	for _, w := range want {
 		if !strings.Contains(sql, w) {
 			t.Errorf("lost in round trip; missing %q in:\n%s", w, sql)
+		}
+	}
+}
+
+func TestSQLiteIndexKeys(t *testing.T) {
+	cases := map[string][]string{
+		`CREATE INDEX "i" ON "t" ("a", "b")`:                        {`"a"`, `"b"`},
+		`CREATE INDEX "i" ON "t" ("org_id", (lower(name)))`:         {`"org_id"`, `lower(name)`},
+		`CREATE UNIQUE INDEX "x(y" ON "t,u" ((a + b) * 2 DESC, c)`:  {`(a + b) * 2`, `c`},
+		`CREATE INDEX i ON t (substr(a, 1, 2)) WHERE b IS NOT NULL`: {`substr(a, 1, 2)`},
+		`CREATE INDEX "i" ON "t" ((lower(name)) ASC, ("a"))`:        {`lower(name)`, `"a"`},
+	}
+	for stmt, want := range cases {
+		got := sqliteIndexKeys(stmt)
+		if strings.Join(got, "|") != strings.Join(want, "|") {
+			t.Errorf("%s:\n  got  %q\n  want %q", stmt, got, want)
+		}
+	}
+}
+
+func TestGeneratedDBMLKeepsMixedIndexKeys(t *testing.T) {
+	idx := &Index{Name: "i", IsUnique: true, Type: "btree"}
+	idx.addKey("org_id", false)
+	idx.addKey("lower(name::text)", true)
+	schema := &DBSchema{Tables: []*Table{{
+		Name:    "t",
+		Columns: []*Column{{Name: "org_id", Type: "int"}, {Name: "name", Type: "text"}},
+		Indexes: []*Index{idx},
+	}}}
+	dbml := GenerateDBML(schema, "PostgreSQL", false)
+	want := "(\"org_id\", `lower(name::text)`) [unique, name: \"i\"]"
+	if !strings.Contains(dbml, want) {
+		t.Errorf("expected %q in:\n%s", want, dbml)
+	}
+}
+
+func TestPgColumnTypeKeepsTimePrecision(t *testing.T) {
+	null := sql.NullInt64{}
+	prec := func(n int64) sql.NullInt64 { return sql.NullInt64{Int64: n, Valid: true} }
+	for _, tc := range []struct {
+		dataType  string
+		precision sql.NullInt64
+		want      string
+	}{
+		{"timestamp with time zone", prec(3), "timestamptz(3)"},
+		{"timestamp with time zone", prec(6), "timestamptz"},
+		{"timestamp without time zone", prec(0), "timestamp(0)"},
+		{"time with time zone", prec(2), "timetz(2)"},
+		{"integer", null, "integer"},
+	} {
+		if got := pgColumnType(tc.dataType, null, null, null, tc.precision, "pg_catalog", ""); got != tc.want {
+			t.Errorf("%s with precision %v: got %q, want %q", tc.dataType, tc.precision, got, tc.want)
 		}
 	}
 }

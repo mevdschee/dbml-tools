@@ -130,6 +130,16 @@ func introspectMariaDB(ctx context.Context, db *sql.DB, schema string) (*DBSchem
 		cols := strings.Split(columnNames, ",")
 		isPrimary := constraintType == "PRIMARY KEY"
 
+		// MariaDB lists every unique index as a UNIQUE constraint. A column's
+		// own UNIQUE is named after the column, so a single-column unique key
+		// with another name was created as a named index: keep it one.
+		if !isPrimary && len(cols) == 1 && constraintName != cols[0] {
+			idx := &Index{Name: constraintName, IsUnique: true, Type: "BTREE"}
+			idx.addKey(cols[0], false)
+			t.Indexes = append(t.Indexes, idx)
+			continue
+		}
+
 		t.Constraints = append(t.Constraints, &Constraint{
 			Name:      constraintName,
 			Columns:   cols,
@@ -187,14 +197,13 @@ func introspectMariaDB(ctx context.Context, db *sql.DB, schema string) (*DBSchem
 				IsUnique: isUniqueInt != 0,
 				Type:     idxType,
 			}
-			if idxExpression.Valid {
-				idx.Expression = idxExpression.String
-			}
 			idxMap[key] = idx
 			idxOrder = append(idxOrder, key)
 		}
-		if columnName != "" {
-			idx.Columns = append(idx.Columns, columnName)
+		if idxExpression.Valid {
+			idx.addKey(idxExpression.String, true)
+		} else if columnName != "" {
+			idx.addKey(columnName, false)
 		}
 	}
 	if err := rows4.Err(); err != nil {
