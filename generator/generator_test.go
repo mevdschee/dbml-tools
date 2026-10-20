@@ -580,3 +580,16 @@ func TestMigrateSQLiteNewTableForeignKeys(t *testing.T) {
 		t.Errorf("expected %q in new table:\n%s", want, got)
 	}
 }
+
+func TestInlineRefForeignKeys(t *testing.T) {
+	src := "Table users {\n  id int [pk]\n}\nTable posts {\n  id int [pk]\n  user_id int [ref: > users.id]\n}\n"
+
+	pg := Dump(parseDBML(src), Postgres)
+	if !strings.Contains(pg, `ALTER TABLE "posts" ADD CONSTRAINT "fk_posts_user_id" FOREIGN KEY ("user_id") REFERENCES "users" ("id");`) {
+		t.Errorf("expected FK from inline ref:\n%s", pg)
+	}
+	lite := Dump(parseDBML(src), SQLite)
+	if !strings.Contains(lite, `CONSTRAINT "fk_posts_user_id" FOREIGN KEY ("user_id") REFERENCES "users" ("id")`) {
+		t.Errorf("expected inline FK from inline ref:\n%s", lite)
+	}
+}

@@ -239,6 +239,7 @@ func (interp *Interpreter) interpretTable(db *Database, decl *parser.ElementDecl
 		col := interp.interpretField(item)
 		if col != nil {
 			tbl.Fields = append(tbl.Fields, *col)
+			db.Refs = append(db.Refs, inlineRefs(tbl, *col)...)
 		}
 	}
 
@@ -369,6 +370,10 @@ func (interp *Interpreter) applyColumnSettings(col *Column, list *parser.ListExp
 			if attr.Value != nil {
 				col.DBDefault = extractDefault(attr.Value)
 			}
+		case "ref":
+			if ep, ok := extractInlineRef(attr); ok {
+				col.InlineRefs = append(col.InlineRefs, ep)
+			}
 		}
 	}
 
@@ -389,6 +394,71 @@ func (interp *Interpreter) applyColumnSettings(col *Column, list *parser.ListExp
 		checks := []interface{}{}
 		col.Checks = &checks
 	}
+}
+
+// extractInlineRef reads a column setting such as `ref: > users.id`, which
+// parses as the relation operator applied to the target endpoint. As in the
+// upstream DBML JSON, the endpoint's Relation holds the operator itself.
+func extractInlineRef(attr *parser.AttributeNode) (RefEndpoint, bool) {
+	fa, ok := attr.Value.(*parser.FuncAppNode)
+	if !ok || len(fa.Args) != 1 {
+		return RefEndpoint{}, false
+	}
+	op := extractName(fa.Callee)
+	if _, _, ok := refRelations(op); !ok {
+		return RefEndpoint{}, false
+	}
+	ep := extractEndpoint(fa.Args[0], op)
+	if ep.TableName == "" || len(ep.FieldNames) == 0 {
+		return RefEndpoint{}, false
+	}
+	ep.Token = nodeRange(attr)
+	return ep, true
+}
+
+// inlineRefs turns the inline refs of a column into Refs from that column to
+// each target, so they are handled like standalone Ref declarations.
+func inlineRefs(tbl Table, col Column) []Ref {
+	var refs []Ref
+	for _, ir := range col.InlineRefs {
+		target, ok := ir.(RefEndpoint)
+		if !ok {
+			continue
+		}
+		colRel, targetRel, ok := refRelations(target.Relation)
+		if !ok {
+			continue
+		}
+		source := RefEndpoint{
+			FieldNames: []string{col.Name},
+			TableName:  tbl.Name,
+			SchemaName: tbl.SchemaName,
+			Relation:   colRel,
+			Token:      col.Token,
+		}
+		target.Relation = targetRel
+		refs = append(refs, Ref{
+			Token:     target.Token,
+			Endpoints: []RefEndpoint{source, target},
+		})
+	}
+	return refs
+}
+
+// refRelations maps a relation operator to the relation of its left and
+// right endpoints.
+func refRelations(op string) (left, right string, ok bool) {
+	switch op {
+	case ">":
+		return "*", "1", true
+	case "<":
+		return "1", "*", true
+	case "-":
+		return "1", "1", true
+	case "<>":
+		return "*", "*", true
+	}
+	return "", "", false
 }
 
 // ---------------------------------------------------------------------------
@@ -434,22 +504,8 @@ func (interp *Interpreter) extractRefFromExpr(expr parser.Node, decl *parser.Ele
 		return nil
 	}
 
-	op := infix.Op.Value
-	var leftRel, rightRel string
-	switch op {
-	case ">":
-		leftRel = "*"
-		rightRel = "1"
-	case "<":
-		leftRel = "1"
-		rightRel = "*"
-	case "-":
-		leftRel = "1"
-		rightRel = "1"
-	case "<>":
-		leftRel = "*"
-		rightRel = "*"
-	default:
+	leftRel, rightRel, ok := refRelations(infix.Op.Value)
+	if !ok {
 		return nil
 	}
 

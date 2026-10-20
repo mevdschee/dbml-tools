@@ -457,3 +457,55 @@ func TestInterpretSchemaQualifiedEnumAndType(t *testing.T) {
 		t.Error("expected [not null] setting to survive the qualified type")
 	}
 }
+
+func TestInterpretInlineRefs(t *testing.T) {
+	src := `Table s.posts {
+  id int [pk]
+  user_id int [not null, ref: > s.users.id]
+  a_id int [ref: - a.id, ref: < b.id]
+  c_id int [ref: <> c.id]
+}
+`
+	db, errs := interpret(src)
+	if len(errs) > 0 {
+		t.Fatalf("unexpected errors: %v", errs)
+	}
+
+	type ep struct {
+		schema, table, field, rel string
+	}
+	toEP := func(e RefEndpoint) ep {
+		schema := ""
+		if e.SchemaName != nil {
+			schema = *e.SchemaName
+		}
+		return ep{schema, e.TableName, strings.Join(e.FieldNames, ","), e.Relation}
+	}
+	want := [][2]ep{
+		{{"s", "posts", "user_id", "*"}, {"s", "users", "id", "1"}},
+		{{"s", "posts", "a_id", "1"}, {"", "a", "id", "1"}},
+		{{"s", "posts", "a_id", "1"}, {"", "b", "id", "*"}},
+		{{"s", "posts", "c_id", "*"}, {"", "c", "id", "*"}},
+	}
+	if len(db.Refs) != len(want) {
+		t.Fatalf("expected %d refs, got %d", len(want), len(db.Refs))
+	}
+	for i, w := range want {
+		got := [2]ep{toEP(db.Refs[i].Endpoints[0]), toEP(db.Refs[i].Endpoints[1])}
+		if got != w {
+			t.Errorf("ref %d: expected %v, got %v", i, w, got)
+		}
+	}
+
+	// The column keeps its inline refs, with the operator as relation.
+	userID := db.Tables[0].Fields[1]
+	if len(userID.InlineRefs) != 1 {
+		t.Fatalf("expected 1 inline ref on user_id, got %d", len(userID.InlineRefs))
+	}
+	if ir := userID.InlineRefs[0].(RefEndpoint); ir.TableName != "users" || ir.Relation != ">" {
+		t.Errorf("unexpected inline ref: %+v", ir)
+	}
+	if userID.NotNull == nil || !*userID.NotNull {
+		t.Error("other settings next to ref must still apply")
+	}
+}
