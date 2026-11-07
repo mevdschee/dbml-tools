@@ -7,7 +7,7 @@ Blog post: https://www.tqdev.com/2026-dbml-database-schema-plain-text-genai/
 
 ## Features
 
-- Convert DSN to DBML
+- Convert DSN (or SQL file, see below) to DBML
 - Convert DBML to SQL
 - Convert DBML to Graphviz DOT diagrams
 - Compare DSN/DBML and create SQL migration
@@ -148,6 +148,44 @@ character), matched case-insensitively. Comma-separate multiple patterns.
 
 The `public` schema prefix is omitted from PostgreSQL output since it is the
 default schema.
+
+#### From a SQL file
+
+`todbml` reads from a live database, so to convert a SQL file (for instance a
+`mysqldump` or `pg_dump` schema dump) load it into a throwaway database first.
+With Docker this takes a few commands and no local database install.
+
+MariaDB / MySQL:
+
+```sh
+docker run -d --rm --name dbml-tmp -e MARIADB_ROOT_PASSWORD=pass -e MARIADB_DATABASE=mydb -p 3306:3306 mariadb:11
+until docker exec dbml-tmp mariadb-admin ping -h 127.0.0.1 -uroot -ppass --silent >/dev/null 2>&1; do sleep 1; done
+docker exec -i dbml-tmp mariadb -uroot -ppass mydb < schema.sql
+dbml-tools todbml mariadb://root:pass@127.0.0.1:3306/mydb > schema.dbml
+docker stop dbml-tmp
+```
+
+PostgreSQL:
+
+```sh
+docker run -d --rm --name dbml-tmp -e POSTGRES_PASSWORD=pass -e POSTGRES_DB=mydb -p 5432:5432 postgres:17
+until docker exec dbml-tmp pg_isready -h 127.0.0.1 -U postgres -q; do sleep 1; done
+docker exec -i dbml-tmp psql -q -v ON_ERROR_STOP=1 -U postgres mydb < schema.sql
+dbml-tools todbml "postgres://postgres:pass@127.0.0.1:5432/mydb?sslmode=disable" > schema.dbml
+docker stop dbml-tmp
+```
+
+The wait loop checks over TCP on purpose: the image's init phase only listens on
+a local socket, so the loop ends once the server is really up. If port 3306 or
+5432 is already taken, map another host port (e.g. `-p 33306:3306`) and use it
+in the DSN. Pick an image version that matches the dump if it uses newer syntax.
+
+SQLite needs no container, the `sqlite3` CLI is enough:
+
+```sh
+sqlite3 schema.db < schema.sql
+dbml-tools todbml sqlite:///path/to/schema.db > schema.dbml
+```
 
 ### check
 
