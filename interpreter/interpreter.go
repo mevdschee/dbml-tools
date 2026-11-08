@@ -34,6 +34,9 @@ type TableRecords struct {
 	// expressions, such as `now()`, parallel to Rows. It is nil when there
 	// are none.
 	Expressions [][]bool `json:"expressions,omitempty"`
+	// Example marks sample data ([example]), which is not exported as
+	// INSERT statements.
+	Example bool `json:"example,omitempty"`
 
 	rowNodes []*parser.RecordRowNode // for error positions
 }
@@ -264,6 +267,7 @@ func (interp *Interpreter) interpretRecordsDecl(db *Database, decl *parser.Eleme
 		cols[i] = extractName(item)
 	}
 	tbl.Records = interp.interpretRecords(cols, blk)
+	tbl.Records.Example = hasExampleSetting(decl.Attrs)
 }
 
 // ---------------------------------------------------------------------------
@@ -294,6 +298,7 @@ func (interp *Interpreter) interpretTable(db *Database, decl *parser.ElementDecl
 
 	var recordsCols []string
 	var recordsHead parser.Node
+	recordsExample := false
 	awaitRecordsBlock := false
 	awaitIndexesBlock := false
 	for _, item := range block.Body {
@@ -337,12 +342,14 @@ func (interp *Interpreter) interpretTable(db *Database, decl *parser.ElementDecl
 				// Without a column list the rows hold every column in
 				// table order; the columns are filled in below.
 				tbl.Records = interp.interpretRecords(recordsCols, blk)
+				tbl.Records.Example = recordsExample
 				continue
 			}
 			// No block found — not a records block after all, fall through.
 		}
 		if pe, ok := item.(*parser.PrimaryExprNode); ok && parser.IsRecordsKeyword(extractName(pe)) {
 			recordsCols = nil
+			recordsExample = false
 			recordsHead = item
 			awaitRecordsBlock = true
 			continue
@@ -357,6 +364,10 @@ func (interp *Interpreter) interpretTable(db *Database, decl *parser.ElementDecl
 			}
 			if callee == "records" {
 				recordsCols = extractRecordsCols(fa)
+				recordsExample = false
+				for _, arg := range fa.Args {
+					recordsExample = recordsExample || hasExampleSetting(arg)
+				}
 				recordsHead = item
 				awaitRecordsBlock = true
 				continue
@@ -1021,6 +1032,21 @@ func extractStringValue(n parser.Node) string {
 		return node.Token.Value
 	}
 	return ""
+}
+
+// hasExampleSetting reports whether n is a settings list holding
+// [example], which marks records as sample data.
+func hasExampleSetting(n parser.Node) bool {
+	list, ok := n.(*parser.ListExprNode)
+	if !ok {
+		return false
+	}
+	for _, item := range list.Items {
+		if attr, ok := item.(*parser.AttributeNode); ok && strings.EqualFold(extractAttrName(attr), "example") {
+			return true
+		}
+	}
+	return false
 }
 
 // extractRecordsCols extracts column names from a records FuncApp, e.g.
