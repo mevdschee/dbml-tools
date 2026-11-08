@@ -49,6 +49,9 @@ func (s *SpanIndex) walk(n parser.Node) {
 	case *parser.ElementDeclNode:
 		s.walk(node.Name)
 		s.walk(node.Alias)
+		if node.Columns != nil {
+			s.walk(node.Columns)
+		}
 		s.walk(node.Attrs)
 		s.walk(node.Body)
 	case *parser.BlockExprNode:
@@ -72,6 +75,10 @@ func (s *SpanIndex) walk(n parser.Node) {
 	case *parser.TupleExprNode:
 		for _, it := range node.Items {
 			s.walk(it)
+		}
+	case *parser.RecordRowNode:
+		for _, v := range node.Values {
+			s.walk(v)
 		}
 	case *parser.AttributeNode:
 		s.walk(node.Name)

@@ -30,6 +30,8 @@ type Database struct {
 type TableRecords struct {
 	Columns []string   `json:"columns"`
 	Rows    [][]string `json:"rows"`
+
+	rowNodes []*parser.RecordRowNode // for error positions
 }
 
 type Table struct {
@@ -176,9 +178,15 @@ func (interp *Interpreter) Interpret(prog *parser.ProgramNode) *Database {
 		Records:       []interface{}{},
 	}
 
+	var records []*parser.ElementDeclNode
 	for _, n := range prog.Body {
 		decl, ok := n.(*parser.ElementDeclNode)
 		if !ok {
+			continue
+		}
+		if parser.IsRecordsKeyword(decl.Type.Value) {
+			// Attached once all tables are known: Records may come first.
+			records = append(records, decl)
 			continue
 		}
 		switch decl.Type.Value {
@@ -201,8 +209,51 @@ func (interp *Interpreter) Interpret(prog *parser.ProgramNode) *Database {
 			})
 		}
 	}
+	for _, decl := range records {
+		interp.interpretRecordsDecl(db, decl)
+	}
 
 	return db
+}
+
+// interpretRecordsDecl attaches a top-level `Records tbl(a, b) { ... }` to
+// its table, as if it had been written inside the table.
+func (interp *Interpreter) interpretRecordsDecl(db *Database, decl *parser.ElementDeclNode) {
+	blk, ok := decl.Body.(*parser.BlockExprNode)
+	if decl.Name == nil || decl.Columns == nil || !ok {
+		return // the parser has reported what is missing
+	}
+	schema, name := splitQualifiedName(decl.Name)
+	var tbl *Table
+	for i := range db.Tables {
+		t := &db.Tables[i]
+		if schema != nil && (t.SchemaName == nil || *t.SchemaName != *schema) {
+			continue
+		}
+		if t.Name == name || (schema == nil && t.Alias != nil && *t.Alias == name) {
+			tbl = t
+			break
+		}
+	}
+	if tbl == nil {
+		interp.Errors = append(interp.Errors, Error{
+			Message:  fmt.Sprintf("Records refers to unknown table %q", extractName(decl.Name)),
+			Position: decl.Name.FirstToken().StartPos,
+		})
+		return
+	}
+	if tbl.Records != nil {
+		interp.Errors = append(interp.Errors, Error{
+			Message:  fmt.Sprintf("table %q already has records", tbl.Name),
+			Position: decl.Type.StartPos,
+		})
+		return
+	}
+	cols := make([]string, len(decl.Columns.Items))
+	for i, item := range decl.Columns.Items {
+		cols[i] = extractName(item)
+	}
+	tbl.Records = interp.interpretRecords(cols, blk)
 }
 
 // ---------------------------------------------------------------------------
@@ -232,6 +283,7 @@ func (interp *Interpreter) interpretTable(db *Database, decl *parser.ElementDecl
 	}
 
 	var recordsCols []string
+	var recordsHead parser.Node
 	awaitRecordsBlock := false
 	awaitIndexesBlock := false
 	for _, item := range block.Body {
@@ -265,10 +317,25 @@ func (interp *Interpreter) interpretTable(db *Database, decl *parser.ElementDecl
 		if awaitRecordsBlock {
 			awaitRecordsBlock = false
 			if blk, ok := item.(*parser.BlockExprNode); ok {
-				tbl.Records = interpretRecords(recordsCols, blk)
+				if tbl.Records != nil {
+					interp.Errors = append(interp.Errors, Error{
+						Message:  fmt.Sprintf("table %q already has records", tbl.Name),
+						Position: recordsHead.FirstToken().StartPos,
+					})
+					continue
+				}
+				// Without a column list the rows hold every column in
+				// table order; the columns are filled in below.
+				tbl.Records = interp.interpretRecords(recordsCols, blk)
 				continue
 			}
 			// No block found — not a records block after all, fall through.
+		}
+		if pe, ok := item.(*parser.PrimaryExprNode); ok && parser.IsRecordsKeyword(extractName(pe)) {
+			recordsCols = nil
+			recordsHead = item
+			awaitRecordsBlock = true
+			continue
 		}
 		if fa, ok := item.(*parser.FuncAppNode); ok {
 			callee := strings.ToLower(extractName(fa.Callee))
@@ -280,6 +347,7 @@ func (interp *Interpreter) interpretTable(db *Database, decl *parser.ElementDecl
 			}
 			if callee == "records" {
 				recordsCols = extractRecordsCols(fa)
+				recordsHead = item
 				awaitRecordsBlock = true
 				continue
 			}
@@ -309,6 +377,14 @@ func (interp *Interpreter) interpretTable(db *Database, decl *parser.ElementDecl
 
 	if tbl.Fields == nil {
 		tbl.Fields = []Column{}
+	}
+
+	if tbl.Records != nil && tbl.Records.Columns == nil {
+		tbl.Records.Columns = make([]string, len(tbl.Fields))
+		for i, f := range tbl.Fields {
+			tbl.Records.Columns[i] = f.Name
+		}
+		interp.checkRecordWidths(tbl.Records, recordsHead)
 	}
 
 	db.Tables = append(db.Tables, tbl)
@@ -952,60 +1028,57 @@ func extractRecordsCols(fa *parser.FuncAppNode) []string {
 	return nil
 }
 
-// interpretRecords extracts row data from a records block.
-// The parser produces items like:
-//   - PrimaryExpr("1") — first value of a row
-//   - FuncApp(callee=",", args=["hello"]) — comma + next value
-//   - FuncApp(callee=",", args=["null"]) — comma + next value
-//
-// A new row starts with a PrimaryExpr; FuncApp(,) items append to the current row.
-// Single-column rows are just a PrimaryExpr with no following comma FuncApp.
-func interpretRecords(cols []string, blk *parser.BlockExprNode) *TableRecords {
+// interpretRecords extracts row data from a records block, whose items are
+// the parser's RecordRowNodes. An empty field is stored as null. When cols
+// is nil (records inside a table without a column list) the row widths are
+// checked once the table's columns are known.
+func (interp *Interpreter) interpretRecords(cols []string, blk *parser.BlockExprNode) *TableRecords {
 	rec := &TableRecords{Columns: cols}
-	var currentRow []string
 	for _, item := range blk.Body {
-		switch node := item.(type) {
-		case *parser.PrimaryExprNode:
-			// Start of a new row — flush previous row if any
-			if len(currentRow) > 0 {
-				rec.Rows = append(rec.Rows, currentRow)
-			}
-			currentRow = []string{recordValue(node)}
-		case *parser.FuncAppNode:
-			callee := extractName(node.Callee)
-			if callee == "," {
-				// Continuation of current row
-				for _, arg := range node.Args {
-					v := extractName(arg)
-					if v == "," {
-						continue
-					}
-					currentRow = append(currentRow, recordValue(arg))
-				}
-			} else {
-				// Non-comma FuncApp starts a new row
-				if len(currentRow) > 0 {
-					rec.Rows = append(rec.Rows, currentRow)
-				}
-				currentRow = []string{recordValue(node.Callee)}
-				for _, arg := range node.Args {
-					v := extractName(arg)
-					if v == "," {
-						continue
-					}
-					currentRow = append(currentRow, recordValue(arg))
-				}
-			}
+		row, ok := item.(*parser.RecordRowNode)
+		if !ok {
+			continue
 		}
+		vals := make([]string, len(row.Values))
+		for i, v := range row.Values {
+			vals[i] = recordValue(v)
+		}
+		rec.Rows = append(rec.Rows, vals)
+		rec.rowNodes = append(rec.rowNodes, row)
 	}
-	if len(currentRow) > 0 {
-		rec.Rows = append(rec.Rows, currentRow)
+	if cols != nil {
+		interp.checkRecordWidths(rec, blk)
 	}
 	return rec
 }
 
+// checkRecordWidths reports rows whose value count differs from the column
+// count.
+func (interp *Interpreter) checkRecordWidths(rec *TableRecords, at parser.Node) {
+	for i, row := range rec.Rows {
+		if len(row) == len(rec.Columns) {
+			continue
+		}
+		pos := at.FirstToken().StartPos
+		if i < len(rec.rowNodes) {
+			pos = rec.rowNodes[i].FirstToken().StartPos
+		}
+		interp.Errors = append(interp.Errors, Error{
+			Message:  fmt.Sprintf("records row has %d values, expected %d", len(row), len(rec.Columns)),
+			Position: pos,
+		})
+	}
+}
+
 // recordValue extracts a value string from a records row item.
 func recordValue(n parser.Node) string {
+	if n == nil {
+		return "null" // empty field
+	}
+	if infix, ok := n.(*parser.InfixExprNode); ok && infix.Op.Value == "." {
+		// An enum constant such as status.active stores the value itself.
+		return extractName(infix.Right)
+	}
 	name := extractName(n)
 	if strings.ToLower(name) == "null" {
 		return "null"

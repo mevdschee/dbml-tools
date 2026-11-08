@@ -381,18 +381,23 @@ func (l *Lexer) scanString() Token {
 		return l.tok(KindString, string(l.src[cs:l.pos]), sp, l.curPos(), s, l.pos)
 	}
 
-	// single-line string
-	cs := l.pos
+	// single-line string; \' and \\ stand for ' and \, other backslashes
+	// are kept as written
+	v := []rune{}
 	for l.pos < len(l.src) && l.src[l.pos] != '\'' && l.src[l.pos] != '\n' {
+		if l.src[l.pos] == '\\' && l.pos+1 < len(l.src) &&
+			(l.src[l.pos+1] == '\'' || l.src[l.pos+1] == '\\') {
+			l.advance()
+		}
+		v = append(v, l.src[l.pos])
 		l.advance()
 	}
-	v := string(l.src[cs:l.pos])
 	if l.pos < len(l.src) && l.src[l.pos] == '\'' {
 		l.advance()
 	} else {
 		l.Errors = append(l.Errors, Error{Message: "unterminated string", Position: sp})
 	}
-	return l.tok(KindString, v, sp, l.curPos(), s, l.pos)
+	return l.tok(KindString, string(v), sp, l.curPos(), s, l.pos)
 }
 
 func (l *Lexer) scanQuoted() Token {

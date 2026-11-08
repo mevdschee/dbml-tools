@@ -324,7 +324,7 @@ func TestParseUnknownKeyword(t *testing.T) {
 	}
 	found := false
 	for _, e := range errs {
-		if e.Message == `unknown declaration keyword "Tableposts"; expected Table, Enum, Ref, Note, Project, TableGroup, or TablePartial` {
+		if e.Message == `unknown declaration keyword "Tableposts"; expected Table, Enum, Ref, Note, Project, TableGroup, TablePartial, or Records` {
 			found = true
 		}
 	}
