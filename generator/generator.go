@@ -577,6 +577,12 @@ func commentStatements(db *interpreter.Database, d Dialect) []string {
 	return stmts
 }
 
+// hasInserts reports whether a table has records to export as INSERT
+// statements. Sample data ([example]) is left out.
+func hasInserts(tbl interpreter.Table) bool {
+	return tbl.Records != nil && !tbl.Records.Example && len(tbl.Records.Rows) > 0
+}
+
 // insertSQL generates INSERT INTO statements from a table's records data.
 func insertSQL(tbl interpreter.Table, d Dialect) string {
 	rec := tbl.Records
@@ -634,7 +640,7 @@ func Dump(db *interpreter.Database, d Dialect) string {
 		for _, stmt := range tableIndexes(tbl, names[tableKey(tbl)], d) {
 			sb.WriteString(stmt + "\n")
 		}
-		if tbl.Records != nil && len(tbl.Records.Rows) > 0 {
+		if hasInserts(tbl) {
 			hasRecords = true
 			if inlineRecords {
 				sb.WriteString(insertSQL(tbl, d))
@@ -645,7 +651,7 @@ func Dump(db *interpreter.Database, d Dialect) string {
 	if !inlineRecords && hasRecords {
 		sb.WriteString("BEGIN;\nPRAGMA defer_foreign_keys = ON;\n")
 		for _, tbl := range db.Tables {
-			if tbl.Records != nil && len(tbl.Records.Rows) > 0 {
+			if hasInserts(tbl) {
 				sb.WriteString(insertSQL(tbl, d))
 			}
 		}
