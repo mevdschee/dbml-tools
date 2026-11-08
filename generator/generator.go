@@ -593,7 +593,9 @@ func insertSQL(tbl interpreter.Table, d Dialect) string {
 	for i, row := range rec.Rows {
 		vals := make([]string, len(row))
 		for j, v := range row {
-			if v == "null" {
+			if rec.IsExpression(i, j) {
+				vals[j] = v
+			} else if v == "null" {
 				vals[j] = "NULL"
 			} else if strings.HasPrefix(v, "X'") {
 				vals[j] = v

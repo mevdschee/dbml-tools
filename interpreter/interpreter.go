@@ -30,8 +30,18 @@ type Database struct {
 type TableRecords struct {
 	Columns []string   `json:"columns"`
 	Rows    [][]string `json:"rows"`
+	// Expressions marks the values that were written as backtick
+	// expressions, such as `now()`, parallel to Rows. It is nil when there
+	// are none.
+	Expressions [][]bool `json:"expressions,omitempty"`
 
 	rowNodes []*parser.RecordRowNode // for error positions
+}
+
+// IsExpression reports whether the value at row, col is a backtick
+// expression, to be used as SQL as written rather than as a string.
+func (r *TableRecords) IsExpression(row, col int) bool {
+	return row < len(r.Expressions) && col < len(r.Expressions[row]) && r.Expressions[row][col]
 }
 
 type Table struct {
@@ -1034,17 +1044,25 @@ func extractRecordsCols(fa *parser.FuncAppNode) []string {
 // checked once the table's columns are known.
 func (interp *Interpreter) interpretRecords(cols []string, blk *parser.BlockExprNode) *TableRecords {
 	rec := &TableRecords{Columns: cols}
+	hasExpr := false
 	for _, item := range blk.Body {
 		row, ok := item.(*parser.RecordRowNode)
 		if !ok {
 			continue
 		}
 		vals := make([]string, len(row.Values))
+		exprs := make([]bool, len(row.Values))
 		for i, v := range row.Values {
 			vals[i] = recordValue(v)
+			exprs[i] = isExpression(v)
+			hasExpr = hasExpr || exprs[i]
 		}
 		rec.Rows = append(rec.Rows, vals)
+		rec.Expressions = append(rec.Expressions, exprs)
 		rec.rowNodes = append(rec.rowNodes, row)
+	}
+	if !hasExpr {
+		rec.Expressions = nil
 	}
 	if cols != nil {
 		interp.checkRecordWidths(rec, blk)
@@ -1068,6 +1086,16 @@ func (interp *Interpreter) checkRecordWidths(rec *TableRecords, at parser.Node) 
 			Position: pos,
 		})
 	}
+}
+
+// isExpression reports whether a records value is a backtick expression.
+func isExpression(n parser.Node) bool {
+	pe, ok := n.(*parser.PrimaryExprNode)
+	if !ok {
+		return false
+	}
+	lit, ok := pe.Expr.(*parser.LiteralNode)
+	return ok && lit.Token.Kind == lexer.KindFuncExpr
 }
 
 // recordValue extracts a value string from a records row item.
