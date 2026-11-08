@@ -10,7 +10,8 @@ declaration         = table_decl
                     | note_decl
                     | project_decl
                     | table_group_decl
-                    | table_partial_decl ;
+                    | table_partial_decl
+                    | records_decl ;
 
 (* ── Table ─────────────────────────────────────────────────────────── *)
 
@@ -94,12 +95,23 @@ index_columns       = column_name
 
 (* ── Records ──────────────────────────────────────────────────────── *)
 
-records_block       = "records" "(" column_name { "," column_name } ")"
-                      "{" { record_row } "}" ;
+(* Inside a table the column list may be left out: the rows then hold  *)
+(* every column in table order. Outside a table it is required.        *)
 
-record_row          = record_value { "," record_value } ;
+records_block       = "records" [ "(" column_name { "," column_name } ")" ]
+                      [ attribute_list ] "{" { record_row } "}" ;
 
-record_value        = string | "null" | function_expr ;
+records_decl        = ( "Records" | "records" ) [ schema_prefix ] table_name
+                      "(" column_name { "," column_name } ")"
+                      [ attribute_list ] "{" { record_row } "}" ;
+
+record_row          = [ record_value ] { "," [ record_value ] } NEWLINE ;
+                      (* an empty field is null *)
+
+record_value        = string | number | [ "-" | "+" ] number | boolean
+                    | "null" | function_expr | enum_constant ;
+
+enum_constant       = [ schema_prefix ] enum_name "." identifier ;
 
 (* ── Attribute list (settings) ─────────────────────────────────────── *)
 

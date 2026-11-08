@@ -60,7 +60,45 @@ func ResolveRefs(prog *parser.ProgramNode, idx *SymbolIndex) []ResolvedRef {
 			out = collectTableBody(out, decl, idx)
 		case "TableGroup":
 			out = collectTableGroupBody(out, decl, idx)
+		default:
+			if parser.IsRecordsKeyword(decl.Type.Value) {
+				out = collectRecordsDecl(out, decl, idx)
+			}
 		}
+	}
+	return out
+}
+
+// collectRecordsDecl extracts the table and column sites of a top-level
+// `Records tbl(a, b) { ... }`.
+func collectRecordsDecl(out []ResolvedRef, decl *parser.ElementDeclNode, idx *SymbolIndex) []ResolvedRef {
+	if decl.Name == nil {
+		return out
+	}
+	tblName, tblRange := extractDeclName(decl.Name)
+	out = appendTableSite(out, tblName, tblRange, idx)
+	if decl.Columns != nil {
+		out = appendColumnSites(out, tblName, decl.Columns, idx)
+	}
+	return out
+}
+
+// appendColumnSites adds a column site for each name in a records column
+// list of table tblName.
+func appendColumnSites(out []ResolvedRef, tblName string, cols *parser.TupleExprNode, idx *SymbolIndex) []ResolvedRef {
+	tbl := idx.ResolveTable(tblName)
+	for _, item := range cols.Items {
+		colName, colRange := extractDeclName(item)
+		if colName == "" {
+			continue
+		}
+		out = append(out, ResolvedRef{
+			Kind:            RefSiteColumn,
+			SiteRange:       colRange,
+			SourceText:      colName,
+			Target:          colSymbol(tbl, colName, idx),
+			ParentTableHint: tblName,
+		})
 	}
 	return out
 }
@@ -263,9 +301,19 @@ func collectTableBody(out []ResolvedRef, decl *parser.ElementDeclNode, idx *Symb
 		if !ok {
 			continue
 		}
-		// Skip pseudo-fields.
+		// Skip pseudo-fields; the column list of records (a, b) names
+		// columns of this table.
 		first := strings.ToLower(extractFirstName(fa.Callee))
-		if first == "note" || first == "indexes" || first == "records" {
+		if first == "records" {
+			tblName, _ := extractDeclName(decl.Name)
+			for _, arg := range fa.Args {
+				if tup, ok := arg.(*parser.TupleExprNode); ok {
+					out = appendColumnSites(out, tblName, tup, idx)
+				}
+			}
+			continue
+		}
+		if first == "note" || first == "indexes" {
 			continue
 		}
 		// Args[0] is the type expression. The type's leftmost identifier

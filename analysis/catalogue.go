@@ -22,6 +22,7 @@ var Keywords = []Keyword{
 	{"Project", "Project declaration — global settings (database_type, name).", "Project ${1:name} {\n\tdatabase_type: '${2|MariaDB,PostgreSQL,SQLite|}'\n}"},
 	{"TableGroup", "TableGroup declaration — visual grouping of tables in diagrams.", "TableGroup ${1:name} {\n\t$0\n}"},
 	{"TablePartial", "TablePartial declaration — a reusable set of columns/settings mixed into tables with `~name`.", "TablePartial ${1:name} {\n\t$0\n}"},
+	{"Records", "Records declaration — data rows for a table, one comma separated row per line.", "Records ${1:table}(${2:columns}) {\n\t$0\n}"},
 }
 
 func KeywordByName(name string) *Keyword {

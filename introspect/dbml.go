@@ -123,6 +123,9 @@ func writeTable(sb *strings.Builder, t *Table, normalize bool) {
 	sb.WriteString("}\n")
 }
 
+// recordEscaper escapes a records string value the way the lexer reads it.
+var recordEscaper = strings.NewReplacer(`\`, `\\`, `'`, `\'`)
+
 func writeRecords(sb *strings.Builder, rec *Record) {
 	sb.WriteString("\n  records (")
 	for i, col := range rec.Columns {
@@ -143,7 +146,7 @@ func writeRecords(sb *strings.Builder, rec *Record) {
 			} else if strings.HasPrefix(val, "X'") {
 				sb.WriteString("`" + val + "`")
 			} else {
-				sb.WriteString("'" + strings.ReplaceAll(val, "'", "\\'") + "'")
+				sb.WriteString("'" + recordEscaper.Replace(val) + "'")
 			}
 		}
 		sb.WriteByte('\n')

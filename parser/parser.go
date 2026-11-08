@@ -2,6 +2,7 @@ package parser
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/mevdschee/dbml-tools/lexer"
 )
@@ -67,9 +68,12 @@ type ElementDeclNode struct {
 	Name  Node // may be nil
 	As    *lexer.Token
 	Alias Node
-	Attrs Node // ListExprNode, may be nil
-	Colon *lexer.Token
-	Body  Node // BlockExprNode or expression
+	// Columns is the column list of a top-level `Records tbl(a, b)`
+	// declaration; nil for every other declaration.
+	Columns *TupleExprNode
+	Attrs   Node // ListExprNode, may be nil
+	Colon   *lexer.Token
+	Body    Node // BlockExprNode or expression
 }
 
 func (n *ElementDeclNode) FirstToken() lexer.Token { return n.Type }
@@ -79,6 +83,9 @@ func (n *ElementDeclNode) LastToken() lexer.Token {
 	}
 	if n.Attrs != nil {
 		return n.Attrs.LastToken()
+	}
+	if n.Columns != nil {
+		return n.Columns.LastToken()
 	}
 	if n.Name != nil {
 		return n.Name.LastToken()
@@ -98,6 +105,9 @@ func (n *ElementDeclNode) ToJSON() interface{} {
 	}
 	if n.Alias != nil {
 		m["alias"] = n.Alias.ToJSON()
+	}
+	if n.Columns != nil {
+		m["columns"] = n.Columns.ToJSON()
 	}
 	if n.Attrs != nil {
 		m["attributeList"] = n.Attrs.ToJSON()
@@ -339,6 +349,43 @@ func (n *TupleExprNode) ToJSON() interface{} {
 	return m
 }
 
+// RecordRowNode (one data row of a records block) ---------------------------
+
+// RecordRowNode is one line of a records block: values separated by commas.
+// An empty field, as in `1, , 'x'`, is a nil entry in Values. There is
+// always one more value than separators.
+type RecordRowNode struct {
+	Values []Node
+	Seps   []lexer.Token
+}
+
+func (n *RecordRowNode) FirstToken() lexer.Token {
+	if n.Values[0] != nil {
+		return n.Values[0].FirstToken()
+	}
+	return n.Seps[0]
+}
+
+func (n *RecordRowNode) LastToken() lexer.Token {
+	if last := n.Values[len(n.Values)-1]; last != nil {
+		return last.LastToken()
+	}
+	return n.Seps[len(n.Seps)-1]
+}
+
+func (n *RecordRowNode) ToJSON() interface{} {
+	m := nodePosFields(n)
+	m["kind"] = "<record-row>"
+	vals := make([]interface{}, len(n.Values))
+	for i, v := range n.Values {
+		if v != nil {
+			vals[i] = v.ToJSON()
+		}
+	}
+	m["values"] = vals
+	return m
+}
+
 // ---------------------------------------------------------------------------
 // Parser
 // ---------------------------------------------------------------------------
@@ -444,20 +491,25 @@ func (p *Parser) Parse() *ProgramNode {
 var validDeclKeywords = map[string]bool{
 	"Table": true, "Enum": true, "Ref": true, "Note": true,
 	"Project": true, "TableGroup": true, "TablePartial": true,
+	"Records": true,
 }
+
+// IsRecordsKeyword reports whether v is the Records keyword. The DBML docs
+// write it both as `Records` and `records`, so case is ignored.
+func IsRecordsKeyword(v string) bool { return strings.EqualFold(v, "records") }
 
 // declRequiresName lists keywords whose BNF rule mandates a name.
 // Project is absent on purpose: the grammar makes its name optional.
 var declRequiresName = map[string]bool{
 	"Table": true, "Enum": true,
-	"TableGroup": true, "TablePartial": true,
+	"TableGroup": true, "TablePartial": true, "Records": true,
 }
 
 // declRequiresBlock lists keywords whose BNF rule mandates a block body {...}.
 // (Ref and Note allow either a block or a colon body.)
 var declRequiresBlock = map[string]bool{
 	"Table": true, "Enum": true, "Project": true,
-	"TableGroup": true, "TablePartial": true,
+	"TableGroup": true, "TablePartial": true, "Records": true,
 }
 
 func (p *Parser) parseDeclaration() Node {
@@ -471,12 +523,17 @@ func (p *Parser) parseDeclaration() Node {
 	}
 
 	typeToken := p.consume()
+	isRecords := IsRecordsKeyword(typeToken.Value)
+	keyword := typeToken.Value
+	if isRecords {
+		keyword = "Records"
+	}
 
 	// Validate declaration keyword.
-	knownKeyword := validDeclKeywords[typeToken.Value]
+	knownKeyword := validDeclKeywords[keyword]
 	if !knownKeyword {
 		p.Errors = append(p.Errors, Error{
-			Message:  fmt.Sprintf("unknown declaration keyword %q; expected Table, Enum, Ref, Note, Project, TableGroup, or TablePartial", typeToken.Value),
+			Message:  fmt.Sprintf("unknown declaration keyword %q; expected Table, Enum, Ref, Note, Project, TableGroup, TablePartial, or Records", typeToken.Value),
 			Position: typeToken.StartPos,
 		})
 	}
@@ -484,6 +541,7 @@ func (p *Parser) parseDeclaration() Node {
 	var name Node
 	var asToken *lexer.Token
 	var alias Node
+	var columns *TupleExprNode
 	var attrs Node
 	var colon *lexer.Token
 	var body Node
@@ -495,11 +553,23 @@ func (p *Parser) parseDeclaration() Node {
 	}
 
 	// Validate required name for known keywords.
-	if knownKeyword && declRequiresName[typeToken.Value] && name == nil {
+	if knownKeyword && declRequiresName[keyword] && name == nil {
 		p.Errors = append(p.Errors, Error{
 			Message:  fmt.Sprintf("%s declaration requires a name", typeToken.Value),
 			Position: typeToken.StartPos,
 		})
+	}
+
+	// Records outside a table must list its columns: Records tbl(a, b).
+	if isRecords && name != nil {
+		if p.cur().Kind == lexer.KindLParen && !p.hasNewlineBefore() {
+			columns = p.parseTupleExpr().(*TupleExprNode)
+		} else {
+			p.Errors = append(p.Errors, Error{
+				Message:  "Records declaration requires a column list, as in Records users(id, name)",
+				Position: typeToken.StartPos,
+			})
+		}
 	}
 
 	// optional "as" alias
@@ -518,6 +588,8 @@ func (p *Parser) parseDeclaration() Node {
 	if p.cur().Kind == lexer.KindLBrace {
 		if typeToken.Value == "Ref" {
 			body = p.parseBlockExpr(p.parseColonBody)
+		} else if isRecords {
+			body = p.parseBlockExpr(p.parseRecordRow)
 		} else {
 			body = p.parseBlockExpr(nil)
 		}
@@ -536,7 +608,7 @@ func (p *Parser) parseDeclaration() Node {
 	}
 
 	// Validate that keywords requiring a block body don't use colon syntax.
-	if knownKeyword && body != nil && declRequiresBlock[typeToken.Value] {
+	if knownKeyword && body != nil && declRequiresBlock[keyword] {
 		if _, ok := body.(*BlockExprNode); !ok {
 			p.Errors = append(p.Errors, Error{
 				Message:  fmt.Sprintf("%s declaration requires a block body {...}", typeToken.Value),
@@ -546,13 +618,14 @@ func (p *Parser) parseDeclaration() Node {
 	}
 
 	return &ElementDeclNode{
-		Type:  typeToken,
-		Name:  name,
-		As:    asToken,
-		Alias: alias,
-		Attrs: attrs,
-		Colon: colon,
-		Body:  body,
+		Type:    typeToken,
+		Name:    name,
+		As:      asToken,
+		Alias:   alias,
+		Columns: columns,
+		Attrs:   attrs,
+		Colon:   colon,
+		Body:    body,
 	}
 }
 
@@ -569,9 +642,14 @@ func (p *Parser) parseBlockExpr(itemParser func() Node) *BlockExprNode {
 	for p.cur().Kind != lexer.KindRBrace && p.cur().Kind != lexer.KindEOF {
 		// Nested brace block (e.g. records/indexes body inside a table block):
 		// consume it as a sub-block so the inner } doesn't close the outer block.
-		// Nested blocks always use the default item parser.
+		// A block that follows a records head holds data rows; any other
+		// nested block uses the default item parser.
 		if p.cur().Kind == lexer.KindLBrace {
-			body = append(body, p.parseBlockExpr(nil))
+			if len(body) > 0 && isRecordsHead(body[len(body)-1]) {
+				body = append(body, p.parseBlockExpr(p.parseRecordRow))
+			} else {
+				body = append(body, p.parseBlockExpr(nil))
+			}
 			continue
 		}
 		var item Node
@@ -586,6 +664,93 @@ func (p *Parser) parseBlockExpr(itemParser func() Node) *BlockExprNode {
 	}
 	close := p.expect(lexer.KindRBrace)
 	return &BlockExprNode{Open: open, Body: body, Close: close}
+}
+
+// isRecordsHead reports whether n is the head of a records block inside a
+// table: `records`, `records (a, b)`, or either with a settings list.
+func isRecordsHead(n Node) bool {
+	var callee Node = n
+	if fa, ok := n.(*FuncAppNode); ok {
+		for _, a := range fa.Args {
+			switch a.(type) {
+			case *TupleExprNode, *ListExprNode:
+			default:
+				return false
+			}
+		}
+		callee = fa.Callee
+	}
+	pe, ok := callee.(*PrimaryExprNode)
+	if !ok {
+		return false
+	}
+	v, ok := pe.Expr.(*VariableNode)
+	return ok && v.Token.Kind == lexer.KindIdentifier && IsRecordsKeyword(v.Token.Value)
+}
+
+// ---------------------------------------------------------------------------
+// Records rows
+// ---------------------------------------------------------------------------
+
+// parseRecordRow parses one line of a records block: comma separated values
+// that end at the line break. A field may be empty (`1, , 3`).
+func (p *Parser) parseRecordRow() Node {
+	row := &RecordRowNode{}
+	row.Values = append(row.Values, p.parseRecordValue(false))
+	for p.cur().Kind == lexer.KindComma && !p.hasNewlineBefore() {
+		row.Seps = append(row.Seps, p.consume())
+		row.Values = append(row.Values, p.parseRecordValue(true))
+	}
+	if row.Values[0] == nil && len(row.Seps) == 0 {
+		// Not a value at all: report it and skip so the block loop advances.
+		tok := p.consume()
+		p.Errors = append(p.Errors, Error{
+			Message:  fmt.Sprintf("unexpected token %s (%q) in records row", tok.Kind, tok.Value),
+			Position: tok.StartPos,
+		})
+		return nil
+	}
+	if !p.hasNewlineBefore() && p.cur().Kind != lexer.KindRBrace && p.cur().Kind != lexer.KindEOF {
+		p.Errors = append(p.Errors, Error{
+			Message:  fmt.Sprintf("expected , or end of line in records row, got %s (%q)", p.cur().Kind, p.cur().Value),
+			Position: p.cur().StartPos,
+		})
+	}
+	return row
+}
+
+// parseRecordValue parses a single records value, or returns nil for an
+// empty field. Values are literals, identifiers such as null and true,
+// enum constants such as status.active, and signed numbers.
+func (p *Parser) parseRecordValue(afterSep bool) Node {
+	// A comma at the end of a line leaves an empty last field.
+	if afterSep && p.hasNewlineBefore() {
+		return nil
+	}
+	switch p.cur().Kind {
+	case lexer.KindComma, lexer.KindRBrace, lexer.KindEOF:
+		return nil
+	case lexer.KindIdentifier, lexer.KindQuotedString:
+		return p.parseDotExpr()
+	case lexer.KindOp:
+		sign := p.cur()
+		if (sign.Value == "-" || sign.Value == "+") && p.pos+1 < len(p.tokens) {
+			num := p.tokens[p.pos+1]
+			if num.Kind == lexer.KindNumeric && num.Start == sign.End {
+				p.pos += 2
+				merged := num
+				merged.Value = sign.Value + num.Value
+				merged.Start = sign.Start
+				merged.StartPos = sign.StartPos
+				merged.LeadingTrivia = sign.LeadingTrivia
+				merged.LeadingInvalid = sign.LeadingInvalid
+				return &PrimaryExprNode{Expr: &LiteralNode{Token: merged}}
+			}
+		}
+	case lexer.KindString, lexer.KindNumeric, lexer.KindFuncExpr, lexer.KindColor:
+		return p.parsePrimaryExpr()
+	}
+	return nil
 }
 
 // ---------------------------------------------------------------------------
